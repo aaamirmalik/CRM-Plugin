@@ -743,14 +743,27 @@ function crm_dashboard_page() {
             const availType = document.getElementById('avail-type');
             const slotsGrid = document.getElementById('slots-grid-output');
             const slotsResultContainer = document.getElementById('slots-result-container');
+            const todayIso = new Date().toISOString().split('T')[0];
+            let availabilityRequestToken = 0;
+
+            if (availDate) {
+                availDate.setAttribute('min', todayIso);
+            }
 
             function loadAvailabilitySlots() {
                 const id = availTherapist ? availTherapist.value : '';
                 const date = availDate ? availDate.value : '';
                 const type = availType ? availType.value : 'online';
+                const requestToken = ++availabilityRequestToken;
 
                 if (!date) {
                     if (slotsResultContainer) slotsResultContainer.style.display = 'none';
+                    if (slotsGrid) slotsGrid.innerHTML = '';
+                    return;
+                }
+                if (date < todayIso) {
+                    if (slotsResultContainer) slotsResultContainer.style.display = 'block';
+                    if (slotsGrid) slotsGrid.innerHTML = "<p style='color:#ef4444; font-weight:600;'>Past dates are not allowed.</p>";
                     return;
                 }
                 if (!id) {
@@ -763,6 +776,9 @@ function crm_dashboard_page() {
                 if (slotsGrid) slotsGrid.innerHTML = "<p style='color:#3b82f6; font-weight:600;'>Loading time slots...</p>";
 
                 jQuery.post(ajaxurl, { action: 'get_api_slots', nonce: crmAdminNonce, id: id, date: date, type: type }, function(res) {
+                    // Ignore stale async responses when user has already changed selection.
+                    if (requestToken !== availabilityRequestToken) return;
+                    if ((availTherapist && availTherapist.value !== id) || (availDate && availDate.value !== date) || (availType && availType.value !== type)) return;
                     if (!slotsGrid) return;
                     slotsGrid.innerHTML = '';
 
