@@ -1,14 +1,24 @@
 <?php
 function crm_dashboard_page() {
     // 1. Initialize API Handler and fetch live data
+    $configured_crm = (string) get_option('crm_selected_provider', 'therapyflow_pro');
+    $configured_crm_url = (string) get_option('crm_api_base_url', 'https://demo.therapyflow.pro/api');
+    $crm_provider_options = [
+        'therapyflow_pro' => 'TherapyFlow Pro',
+        'therapyflow_demo' => 'TherapyFlow Demo',
+        'custom' => 'Custom CRM',
+    ];
+    if (!isset($crm_provider_options[$configured_crm])) $configured_crm = 'therapyflow_pro';
+
     $api = new CRM_API_Handler();
     $therapists = $api->get_all_therapists();
+    $api_error = $api->get_last_error();
     
     // NEW: Fetch Dynamic Appointment Count
     $total_appointments = $api->get_appointment_count();
 
     // 2. Determine connection status and therapist count
-    if (is_array($therapists) && !empty($therapists)) {
+    if (is_array($therapists) && !empty($therapists) && $api_error === '') {
         $total_therapists = count($therapists);
         $connection_status = 'active';
         $status_label = 'Connected';
@@ -22,6 +32,31 @@ function crm_dashboard_page() {
     // 3. Fetch existing forms
     $all_forms = get_option('crm_registered_forms_list', []);
     $saved_fields = get_option('crm_form_fields', '[]');
+    $booking_logs = get_option('crm_sync_logs', []);
+    if (!is_array($booking_logs)) $booking_logs = [];
+    $recent_booking_logs = array_slice($booking_logs, 0, 8);
+    $current_user_id = get_current_user_id();
+    $notification_meta_key = 'crm_notifications_last_seen_sig';
+    $last_seen_sig = $current_user_id ? (string) get_user_meta($current_user_id, $notification_meta_key, true) : '';
+    $latest_notification_sig = '';
+    $unread_notifications_count = 0;
+    if (!empty($booking_logs)) {
+        $first = $booking_logs[0];
+        $latest_id = isset($first['id']) ? sanitize_text_field((string) $first['id']) : '';
+        $latest_date = isset($first['date']) ? sanitize_text_field((string) $first['date']) : '';
+        $latest_notification_sig = md5($latest_id . '|' . $latest_date);
+
+        foreach ($booking_logs as $log) {
+            if (!is_array($log)) continue;
+            $log_id = isset($log['id']) ? sanitize_text_field((string) $log['id']) : '';
+            $log_date = isset($log['date']) ? sanitize_text_field((string) $log['date']) : '';
+            $sig = md5($log_id . '|' . $log_date);
+            if ($last_seen_sig !== '' && hash_equals($last_seen_sig, $sig)) {
+                break;
+            }
+            $unread_notifications_count++;
+        }
+    }
     $sync_url = wp_nonce_url(admin_url('admin-post.php?action=crm_sync_therapists_cache'), 'crm_sync_therapists_cache');
     $last_sync = (int) get_option('crm_therapist_last_sync', 0);
     $last_sync_label = $last_sync > 0 ? wp_date('Y-m-d H:i:s', $last_sync) : 'Never';
@@ -80,11 +115,9 @@ function crm_dashboard_page() {
         
         /* New Slot Grid Styling - EASY FOR USERS */
         .slots-visual-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); gap: 12px; margin-top: 20px; }
-        .slot-pill { padding: 12px; border: 1.5px solid #e2e8f0; border-radius: 8px; text-align: center; font-size: 14px; font-weight: 700; cursor: pointer; transition: all 0.2s ease; }
+        .slot-pill { padding: 12px; border: 1.5px solid #e2e8f0; border-radius: 8px; text-align: center; font-size: 14px; font-weight: 700; cursor: default; }
         .slot-pill.available { background: #ffffff; color: #1e293b; border-color: #3b82f6; }
-        .slot-pill.available:hover { background: #3b82f6; color: white; transform: translateY(-2px); }
-        .slot-pill.booked { background: #f8fafc; color: #cbd5e1; cursor: not-allowed; text-decoration: line-through; border-style: dashed; }
-        .slot-pill.selected { background: #10b981 !important; color: white !important; border-color: #059669 !important; }
+        .slot-pill.booked { background: #fef2f2; color: #b91c1c; border-color: #ef4444; text-decoration: line-through; }
 
         /* Profile Modal Styling */
         .profile-section { margin-bottom: 20px; border-bottom: 1px solid #eee; padding-bottom: 15px; }
@@ -99,15 +132,58 @@ function crm_dashboard_page() {
         .dur-btn { padding: 10px 15px; border: 1.5px solid #e2e8f0; border-radius: 6px; background: #fff; font-size: 13px; cursor: pointer; font-weight: 600; color: #64748b; transition: 0.2s; }
         .dur-btn.active { background: #3b82f6; color: #fff; border-color: #3b82f6; }
         .form-label-premium { font-weight: 600; font-size: 14px; color: #334155; display: block; margin-bottom: 8px; }
+        .crm-nav-right { position: relative; display: flex; gap: 10px; align-items: center; }
+        .crm-top-icon-btn { width: 34px; height: 34px; display: inline-flex; align-items: center; justify-content: center; border: 1px solid #dbe3ef; border-radius: 8px; background: #fff; color: #334155; cursor: pointer; position: relative; }
+        .crm-top-icon-btn:hover { background: #f8fafc; }
+        .crm-dot-count { position: absolute; top: -6px; right: -6px; min-width: 18px; height: 18px; border-radius: 999px; background: #ef4444; color: #fff; font-size: 11px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; padding: 0 4px; }
+        .crm-top-popover { position: absolute; top: 44px; right: 0; width: 320px; max-height: 360px; overflow-y: auto; background: #fff; border: 1px solid #e2e8f0; border-radius: 10px; box-shadow: 0 10px 30px rgba(15, 23, 42, 0.12); display: none; z-index: 20; }
+        .crm-top-popover.open { display: block; }
+        .crm-popover-header { padding: 12px 14px; border-bottom: 1px solid #f1f5f9; font-weight: 700; color: #334155; }
+        .crm-popover-item { padding: 10px 14px; border-bottom: 1px solid #f8fafc; }
+        .crm-popover-item:last-child { border-bottom: none; }
+        .crm-popover-item small { color: #64748b; display: block; margin-top: 2px; }
+        .crm-top-actions { display: flex; gap: 8px; padding: 10px 14px; border-top: 1px solid #f1f5f9; background: #f8fafc; }
+        .crm-top-actions button { border: 1px solid #dbe3ef; background: #fff; color: #1e293b; border-radius: 6px; padding: 6px 10px; cursor: pointer; font-size: 12px; }
     </style>
 
     <div class="crm-app-shell">
         <header class="crm-top-nav">
             <div class="crm-nav-left"><h1>CRM Connector Pro</h1><p>Connect Your Website with Your CRM</p></div>
             <div class="crm-nav-right">
-                <iconify-icon icon="lucide:message-square"></iconify-icon>
-                <iconify-icon icon="lucide:bell"></iconify-icon>
-                <iconify-icon icon="lucide:settings"></iconify-icon>
+                <button type="button" class="crm-top-icon-btn" id="crm-top-logs-btn" title="Open Appointment Logs">
+                    <iconify-icon icon="lucide:message-square"></iconify-icon>
+                </button>
+                <button type="button" class="crm-top-icon-btn" id="crm-top-bell-btn" title="Notifications">
+                    <iconify-icon icon="lucide:bell"></iconify-icon>
+                    <?php if ($unread_notifications_count > 0) : ?>
+                        <span class="crm-dot-count" id="crm-notification-badge"><?php echo esc_html($unread_notifications_count > 99 ? '99+' : (string) $unread_notifications_count); ?></span>
+                    <?php endif; ?>
+                </button>
+                <button type="button" class="crm-top-icon-btn" id="crm-top-settings-btn" title="Open CRM Settings">
+                    <iconify-icon icon="lucide:settings"></iconify-icon>
+                </button>
+                <div class="crm-top-popover" id="crm-notification-popover">
+                    <div class="crm-popover-header">Recent Booking Notifications</div>
+                    <?php if (!empty($recent_booking_logs)) : ?>
+                        <?php foreach ($recent_booking_logs as $log) : ?>
+                            <?php
+                            $log_name = isset($log['fullName']) ? sanitize_text_field((string) $log['fullName']) : 'Client';
+                            $log_type = isset($log['type']) ? sanitize_text_field((string) $log['type']) : 'online';
+                            $log_date = isset($log['date']) ? sanitize_text_field((string) $log['date']) : '';
+                            ?>
+                            <div class="crm-popover-item">
+                                <strong><?php echo esc_html($log_name); ?></strong>
+                                <small><?php echo esc_html(ucfirst($log_type)); ?><?php echo $log_date !== '' ? ' · ' . esc_html($log_date) : ''; ?></small>
+                            </div>
+                        <?php endforeach; ?>
+                    <?php else : ?>
+                        <div class="crm-popover-item"><small>No recent booking notifications.</small></div>
+                    <?php endif; ?>
+                    <div class="crm-top-actions">
+                        <button type="button" id="crm-popover-open-logs">View Logs</button>
+                        <button type="button" id="crm-popover-open-settings">Open Settings</button>
+                    </div>
+                </div>
             </div>
         </header>
 
@@ -130,21 +206,26 @@ function crm_dashboard_page() {
                         <div class="stat-card">
                             <label>CRM Status</label>
                             <div class="status-indicator">
-                                <span class="dot <?php echo $connection_status; ?>"></span> 
-                                <div><strong><?php echo $status_label; ?></strong><p>TherapyFlow API</p></div>
+                                <span id="crm-status-dot" class="dot <?php echo $connection_status; ?>"></span> 
+                                <div><strong id="crm-status-label"><?php echo $status_label; ?></strong><p>TherapyFlow API</p></div>
                             </div>
                         </div>
                         <div class="stat-card">
                             <label>Active Therapists</label>
-                            <div class="huge-number"><?php echo $total_therapists; ?></div>
+                            <div id="crm-total-therapists" class="huge-number"><?php echo $total_therapists; ?></div>
                             <p>Profiles fetched from CRM</p>
                         </div>
                         <div class="stat-card">
                             <label>Total Appointments</label>
-                            <div class="huge-number" style="color: #3b82f6;"><?php echo $total_appointments; ?></div>
+                            <div id="crm-total-appointments" class="huge-number" style="color: #3b82f6;"><?php echo $total_appointments; ?></div>
                             <p>Dynamic Real-time Count</p>
                         </div>
-                        <div class="stat-card"><label>Sync Status</label><div class="huge-number" style="font-size:20px; color:#10b981;">Active</div></div>
+                        <div class="stat-card">
+                            <label>Sync Status</label>
+                            <div id="crm-sync-status" class="huge-number" style="font-size:20px; color:<?php echo $connection_status === 'active' ? '#10b981' : '#ef4444'; ?>;">
+                                <?php echo $connection_status === 'active' ? 'Active' : 'Inactive'; ?>
+                            </div>
+                        </div>
                     </div>
                 </section>
 
@@ -193,7 +274,7 @@ function crm_dashboard_page() {
                 <section id="tab-availability" class="crm-tab-content">
                     <div class="crm-section-card">
                         <h3>Easy Availability Checker</h3>
-                        <p>Select a therapist and date to instantly see available booking windows.</p>
+                        <p>Select therapist, date, and session type. Slots load automatically after date selection.</p>
                         <div style="display:flex; gap:15px; margin-top:20px; align-items: flex-end;">
                             <div style="flex:1;">
                                 <label>1. Select Therapist</label>
@@ -215,10 +296,9 @@ function crm_dashboard_page() {
                                     <option value="in-person">In-Person</option>
                                 </select>
                             </div>
-                            <button id="check-slots-btn" class="btn-primary" style="height: 38px;">Fetch Free Slots</button>
                         </div>
                         <div id="slots-result-container" style="margin-top:30px; display:none; background: #fafafa; padding: 25px; border-radius: 12px; border: 1px dashed #ddd;">
-                            <h4 id="slots-title" style="margin-top:0;">Clinically Available Times</h4>
+                            <h4 id="slots-title" style="margin-top:0;">Time Slots</h4>
                             <div class="slots-visual-grid" id="slots-grid-output"></div>
                         </div>
                     </div>
@@ -233,9 +313,13 @@ function crm_dashboard_page() {
                         <form id="manual-booking-form">
                             <div class="form-row-2">
                                 <div><label class="form-label-premium">Client *</label>
-                                <input type="text" name="fullName" class="f-input" placeholder="Select client" required></div>
+                                <input type="text" name="fullName" class="f-input" placeholder="Client name" required></div>
+                                <div><label class="form-label-premium">Email *</label>
+                                <input type="email" name="email" class="f-input" placeholder="client@example.com" required></div>
+                            </div>
+                            <div class="form-row-2">
                                 <div><label class="form-label-premium">Therapist *</label>
-                                    <select name="therapistId" class="f-input" required>
+                                    <select name="therapistId" id="manual-therapist-id" class="f-input" required>
                                         <option value="">Select therapist</option>
                                         <?php foreach($therapists as $t): ?>
                                             <option value="<?php echo esc_attr($t['id']); ?>"><?php echo esc_html($t['fullName']); ?></option>
@@ -247,27 +331,27 @@ function crm_dashboard_page() {
                             <div style="margin-bottom:15px;">
                                 <label class="form-label-premium">Service *</label>
                                 <select name="serviceId" class="f-input" required>
-                                    <option value="">Select service</option>
-                                    <option value="50">Psychotherapy (PR) session 60 minutes (MVA) - $149.61 (60min)</option>
-                                    <option value="51">Initial Consultation 30 min - Free</option>
+                                    <option value="51" selected>Free Consultation</option>
                                 </select>
                             </div>
 
                             <div class="form-row-2">
                                 <div><label class="form-label-premium">Date *</label>
-                                <input type="date" name="sessionDate" class="f-input" required></div>
-                                <div><label class="form-label-premium">Room *</label>
-                                    <select name="room" class="f-input">
-                                        <option value="">Select room</option>
-                                        <option>Room 102 - Psych-B</option>
-                                        <option>Virtual Meeting Room</option>
+                                <input type="date" id="manual-session-date" name="sessionDate" class="f-input" required></div>
+                                <div><label class="form-label-premium">Session Type *</label>
+                                    <select name="sessionType" id="manual-session-type" class="f-input" required>
+                                        <option value="online">Online</option>
+                                        <option value="in-person">In-Person</option>
                                     </select>
                                 </div>
                             </div>
 
                             <div class="form-row-2" style="align-items: start;">
                                 <div><label class="form-label-premium">Time *</label>
-                                <input type="text" name="sessionTime" class="f-input" placeholder="Select time" required></div>
+                                    <select name="sessionTime" id="manual-session-time" class="f-input" required>
+                                        <option value="">Select therapist/date/type first</option>
+                                    </select>
+                                </div>
                                 <div>
                                     <label class="form-label-premium">Duration (minutes)</label>
                                     <div class="duration-box">
@@ -300,7 +384,25 @@ function crm_dashboard_page() {
                         <table class="crm-table">
                             <thead><tr><th>ID</th><th>Client</th><th>Date</th><th>Type</th><th>Status</th></tr></thead>
                             <tbody id="logs-table-body">
-                                <tr><td>#10200</td><td>Test User</td><td>2026-03-16</td><td>Online</td><td><span class="badge active">Scheduled</span></td></tr>
+                                <?php if (!empty($booking_logs)) : ?>
+                                    <?php foreach ($booking_logs as $log) : ?>
+                                        <?php
+                                        $log_id = isset($log['id']) ? sanitize_text_field((string) $log['id']) : '-';
+                                        $log_name = isset($log['fullName']) ? sanitize_text_field((string) $log['fullName']) : 'Unknown Client';
+                                        $log_date = isset($log['date']) ? sanitize_text_field((string) $log['date']) : '-';
+                                        $log_type = isset($log['type']) ? sanitize_text_field((string) $log['type']) : 'online';
+                                        ?>
+                                        <tr>
+                                            <td>#<?php echo esc_html($log_id); ?></td>
+                                            <td><?php echo esc_html($log_name); ?></td>
+                                            <td><?php echo esc_html($log_date); ?></td>
+                                            <td><?php echo esc_html(ucfirst($log_type)); ?></td>
+                                            <td><span class="badge active">Scheduled</span></td>
+                                        </tr>
+                                    <?php endforeach; ?>
+                                <?php else : ?>
+                                    <tr><td colspan="5" style="text-align:center; padding:20px;">No appointment logs found yet.</td></tr>
+                                <?php endif; ?>
                             </tbody>
                         </table>
                     </div>
@@ -336,8 +438,29 @@ function crm_dashboard_page() {
                     <div class="crm-section-card" style="max-width: 600px;">
                         <h3>CRM Settings</h3>
                         <p>Configure your CRM integration settings below.</p>
-                        <div class="crm-form-field"><label>Select CRM</label><select class="f-input"><option>TherapyFlow Pro</option></select></div>
-                        <div class="crm-form-field"><label>CRM URL</label><input type="text" class="f-input" value="https://demo.therapyflow.pro/api"></div>
+                        <div class="crm-form-field">
+                            <label>Select CRM</label>
+                            <select class="f-input" id="crm-settings-provider">
+                                <?php foreach ($crm_provider_options as $provider_key => $provider_label) : ?>
+                                    <option value="<?php echo esc_attr($provider_key); ?>" <?php selected($configured_crm, $provider_key); ?>>
+                                        <?php echo esc_html($provider_label); ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                        <div class="crm-form-field">
+                            <label>CRM API URL</label>
+                            <input type="text" id="crm-settings-api-url" class="f-input" value="<?php echo esc_attr($configured_crm_url); ?>" placeholder="https://your-crm-domain/api">
+                        </div>
+                        <div style="display:flex; align-items:center; gap:10px; margin-top:10px;">
+                            <button type="button" class="btn-primary" id="crm-save-settings-btn">Save Settings</button>
+                            <span id="crm-settings-status" style="font-size:13px; color:#64748b;"></span>
+                        </div>
+                        <p id="crm-settings-conn-error" style="margin-top:12px; color:#ef4444; font-size:12px; <?php echo ($connection_status !== 'active' && $api_error !== '') ? '' : 'display:none;'; ?>">
+                            <?php if ($connection_status !== 'active' && $api_error !== '') : ?>
+                                <?php echo esc_html('Connection Error: ' . $api_error); ?>
+                            <?php endif; ?>
+                        </p>
                     </div>
                 </section>
             </main>
@@ -407,16 +530,164 @@ function crm_dashboard_page() {
             // 1. TAB SWITCHER
             const navItems = document.querySelectorAll('.nav-item');
             const tabContents = document.querySelectorAll('.crm-tab-content');
+            const notificationPopover = document.getElementById('crm-notification-popover');
+
+            function activateTab(targetTab) {
+                if (!targetTab) return;
+                navItems.forEach(i => i.classList.remove('active'));
+                const activeNav = document.querySelector(`.nav-item[data-tab="${targetTab}"]`);
+                if (activeNav) activeNav.classList.add('active');
+                tabContents.forEach(tab => tab.classList.remove('active'));
+                const target = document.getElementById('tab-' + targetTab);
+                if (target) target.classList.add('active');
+            }
 
             navItems.forEach(item => {
                 item.addEventListener('click', function() {
                     const targetTab = this.getAttribute('data-tab');
-                    navItems.forEach(i => i.classList.remove('active'));
-                    this.classList.add('active');
-                    tabContents.forEach(tab => tab.classList.remove('active'));
-                    document.getElementById('tab-' + targetTab).classList.add('active');
+                    activateTab(targetTab);
+                    if (notificationPopover) notificationPopover.classList.remove('open');
                 });
             });
+
+            // Top Bar Shortcuts (Notifications / Settings / Logs)
+            const topBellBtn = document.getElementById('crm-top-bell-btn');
+            const topSettingsBtn = document.getElementById('crm-top-settings-btn');
+            const topLogsBtn = document.getElementById('crm-top-logs-btn');
+            const popOpenLogsBtn = document.getElementById('crm-popover-open-logs');
+            const popOpenSettingsBtn = document.getElementById('crm-popover-open-settings');
+            const notificationBadge = document.getElementById('crm-notification-badge');
+            let notificationsMarkedRead = <?php echo $unread_notifications_count > 0 ? 'false' : 'true'; ?>;
+
+            if (topBellBtn && notificationPopover) {
+                topBellBtn.addEventListener('click', function(e) {
+                    e.stopPropagation();
+                    const willOpen = !notificationPopover.classList.contains('open');
+                    notificationPopover.classList.toggle('open');
+                    if (willOpen && !notificationsMarkedRead) {
+                        jQuery.post(ajaxurl, { action: 'crm_mark_notifications_read', nonce: crmAdminNonce }, function(res) {
+                            if (res && res.success) {
+                                notificationsMarkedRead = true;
+                                if (notificationBadge) notificationBadge.remove();
+                            }
+                        });
+                    }
+                });
+                document.addEventListener('click', function(e) {
+                    if (!notificationPopover.contains(e.target) && e.target !== topBellBtn) {
+                        notificationPopover.classList.remove('open');
+                    }
+                });
+            }
+            if (topSettingsBtn) {
+                topSettingsBtn.addEventListener('click', function() {
+                    activateTab('crm-settings');
+                    if (notificationPopover) notificationPopover.classList.remove('open');
+                });
+            }
+            if (topLogsBtn) {
+                topLogsBtn.addEventListener('click', function() {
+                    activateTab('appointment-logs');
+                    if (notificationPopover) notificationPopover.classList.remove('open');
+                });
+            }
+            if (popOpenLogsBtn) {
+                popOpenLogsBtn.addEventListener('click', function() {
+                    activateTab('appointment-logs');
+                    if (notificationPopover) notificationPopover.classList.remove('open');
+                });
+            }
+            if (popOpenSettingsBtn) {
+                popOpenSettingsBtn.addEventListener('click', function() {
+                    activateTab('crm-settings');
+                    if (notificationPopover) notificationPopover.classList.remove('open');
+                });
+            }
+
+            // CRM Settings Save
+            const crmSaveSettingsBtn = document.getElementById('crm-save-settings-btn');
+            const crmProviderSelect = document.getElementById('crm-settings-provider');
+            const crmApiUrlInput = document.getElementById('crm-settings-api-url');
+            const crmSettingsStatus = document.getElementById('crm-settings-status');
+            if (crmSaveSettingsBtn && crmProviderSelect && crmApiUrlInput) {
+                crmSaveSettingsBtn.addEventListener('click', function() {
+                    const provider = crmProviderSelect.value || 'therapyflow_pro';
+                    const apiUrl = (crmApiUrlInput.value || '').trim();
+                    if (!apiUrl) {
+                        if (crmSettingsStatus) {
+                            crmSettingsStatus.style.color = '#ef4444';
+                            crmSettingsStatus.textContent = 'CRM API URL is required.';
+                        }
+                        return;
+                    }
+                    crmSaveSettingsBtn.disabled = true;
+                    crmSaveSettingsBtn.textContent = 'Saving...';
+                    if (crmSettingsStatus) {
+                        crmSettingsStatus.style.color = '#64748b';
+                        crmSettingsStatus.textContent = 'Saving settings...';
+                    }
+
+                    jQuery.post(ajaxurl, {
+                        action: 'save_crm_settings_action',
+                        nonce: crmAdminNonce,
+                        provider: provider,
+                        api_url: apiUrl
+                    }, function(res) {
+                        if (res && res.success) {
+                            if (crmSettingsStatus) {
+                                crmSettingsStatus.style.color = '#10b981';
+                                crmSettingsStatus.textContent = (res.data && res.data.message) ? res.data.message : 'CRM settings saved.';
+                            }
+                            if (res.data) {
+                                const statusDot = document.getElementById('crm-status-dot');
+                                const statusLabel = document.getElementById('crm-status-label');
+                                const syncStatus = document.getElementById('crm-sync-status');
+                                const totalTherapists = document.getElementById('crm-total-therapists');
+                                const totalAppointments = document.getElementById('crm-total-appointments');
+                                const connError = document.getElementById('crm-settings-conn-error');
+
+                                if (statusDot) {
+                                    statusDot.classList.remove('active', 'inactive');
+                                    statusDot.classList.add(res.data.connection_status === 'active' ? 'active' : 'inactive');
+                                }
+                                if (statusLabel) statusLabel.textContent = res.data.status_label || 'Disconnected';
+                                if (syncStatus) {
+                                    syncStatus.textContent = res.data.sync_status || 'Inactive';
+                                    syncStatus.style.color = (res.data.connection_status === 'active') ? '#10b981' : '#ef4444';
+                                }
+                                if (typeof res.data.total_therapists !== 'undefined' && totalTherapists) {
+                                    totalTherapists.textContent = String(res.data.total_therapists);
+                                }
+                                if (typeof res.data.total_appointments !== 'undefined' && totalAppointments) {
+                                    totalAppointments.textContent = String(res.data.total_appointments);
+                                }
+                                if (connError) {
+                                    if (res.data.connection_status === 'active') {
+                                        connError.style.display = 'none';
+                                        connError.textContent = '';
+                                    } else {
+                                        connError.style.display = '';
+                                        connError.textContent = res.data.api_error ? ('Connection Error: ' + res.data.api_error) : 'Connection Error: Unable to connect to CRM.';
+                                    }
+                                }
+                            }
+                        } else {
+                            if (crmSettingsStatus) {
+                                crmSettingsStatus.style.color = '#ef4444';
+                                crmSettingsStatus.textContent = (res && res.data && res.data.message) ? res.data.message : 'Could not save CRM settings.';
+                            }
+                        }
+                    }).fail(function() {
+                        if (crmSettingsStatus) {
+                            crmSettingsStatus.style.color = '#ef4444';
+                            crmSettingsStatus.textContent = 'Save request failed.';
+                        }
+                    }).always(function() {
+                        crmSaveSettingsBtn.disabled = false;
+                        crmSaveSettingsBtn.textContent = 'Save Settings';
+                    });
+                });
+            }
 
             // 2. THERAPIST SEARCH
             const searchInput = document.getElementById('therapist-search');
@@ -467,61 +738,121 @@ function crm_dashboard_page() {
             document.querySelectorAll('.close-profile-modal').forEach(b => b.onclick = () => profileModal.classList.remove('open'));
 
             // 4. AUTO AVAILABILITY SLOTS LOGIC (API #3)
-            document.getElementById('check-slots-btn').addEventListener('click', function() {
-                const id = document.getElementById('avail-therapist-id').value;
-                const date = document.getElementById('avail-date').value;
-                const type = document.getElementById('avail-type').value;
-                
-                if(!id || !date) return alert('Please select a therapist and a specific date.');
-                
-                const btn = this;
-                const grid = document.getElementById('slots-grid-output');
-                btn.innerText = "Syncing CRM...";
-                grid.innerHTML = "";
+            const availTherapist = document.getElementById('avail-therapist-id');
+            const availDate = document.getElementById('avail-date');
+            const availType = document.getElementById('avail-type');
+            const slotsGrid = document.getElementById('slots-grid-output');
+            const slotsResultContainer = document.getElementById('slots-result-container');
+
+            function loadAvailabilitySlots() {
+                const id = availTherapist ? availTherapist.value : '';
+                const date = availDate ? availDate.value : '';
+                const type = availType ? availType.value : 'online';
+
+                if (!date) {
+                    if (slotsResultContainer) slotsResultContainer.style.display = 'none';
+                    return;
+                }
+                if (!id) {
+                    if (slotsResultContainer) slotsResultContainer.style.display = 'block';
+                    if (slotsGrid) slotsGrid.innerHTML = "<p style='color:#ef4444; font-weight:600;'>Please select a therapist first.</p>";
+                    return;
+                }
+
+                if (slotsResultContainer) slotsResultContainer.style.display = 'block';
+                if (slotsGrid) slotsGrid.innerHTML = "<p style='color:#3b82f6; font-weight:600;'>Loading time slots...</p>";
 
                 jQuery.post(ajaxurl, { action: 'get_api_slots', nonce: crmAdminNonce, id: id, date: date, type: type }, function(res) {
-                    btn.innerText = "Fetch Free Slots";
-                    document.getElementById('slots-result-container').style.display = 'block';
-                    
-                    if(res.slots && res.slots.length > 0) {
+                    if (!slotsGrid) return;
+                    slotsGrid.innerHTML = '';
+
+                    if (res.slots && res.slots.length > 0) {
                         res.slots.forEach(slot => {
                             const statusClass = slot.available ? 'available' : 'booked';
                             const pill = document.createElement('div');
                             pill.className = `slot-pill ${statusClass}`;
                             pill.textContent = slot.time || '';
-                            if (slot.available) {
-                                pill.addEventListener('click', () => window.selectThisSlot(slot.time, pill));
-                            }
-                            grid.appendChild(pill);
+                            slotsGrid.appendChild(pill);
                         });
                     } else {
-                        grid.innerHTML = "<p style='color:#ef4444; font-weight:600;'>No slots found for this date. The therapist might be fully booked.</p>";
+                        slotsGrid.innerHTML = "<p style='color:#ef4444; font-weight:600;'>No time slots found for this date.</p>";
                     }
                 });
+            }
+
+            if (availDate) availDate.addEventListener('change', loadAvailabilitySlots);
+            if (availTherapist) availTherapist.addEventListener('change', () => {
+                if (availDate && availDate.value) loadAvailabilitySlots();
+            });
+            if (availType) availType.addEventListener('change', () => {
+                if (availDate && availDate.value) loadAvailabilitySlots();
             });
 
-            window.selectThisSlot = (time, el) => {
-                document.querySelectorAll('.slot-pill').forEach(p => p.classList.remove('selected'));
-                if (el) el.classList.add('selected');
-                if(confirm(`Would you like to transfer ${time} to the Schedule form?`)) {
-                    document.querySelector('[data-tab="direct-booking"]').click();
-                    document.getElementsByName('sessionTime')[0].value = time;
-                }
-            };
-
             // 5. DURATION SELECTION UI
-            document.querySelectorAll('.dur-btn').forEach(btn => {
+            const manualForm = document.getElementById('manual-booking-form');
+            const manualDurationButtons = manualForm ? manualForm.querySelectorAll('.duration-box .dur-btn') : [];
+            const manualDurationInput = manualForm ? manualForm.querySelector('input[name="duration"]') : null;
+            manualDurationButtons.forEach(btn => {
                 btn.onclick = function() {
-                    document.querySelectorAll('.dur-btn').forEach(b => b.classList.remove('active'));
+                    manualDurationButtons.forEach(b => b.classList.remove('active'));
                     this.classList.add('active');
-                    document.querySelector('input[name="duration"]').value = this.dataset.val;
+                    if (manualDurationInput) manualDurationInput.value = this.dataset.val;
                 };
             });
 
-            // 6. MANUAL BOOKING LOGIC (API #4)
+            // 6. DIRECT BOOKING SLOTS LOADING
+            const manualTherapist = document.getElementById('manual-therapist-id');
+            const manualDate = document.getElementById('manual-session-date');
+            const manualType = document.getElementById('manual-session-type');
+            const manualTime = document.getElementById('manual-session-time');
+
+            function resetManualTime(message) {
+                if (!manualTime) return;
+                manualTime.innerHTML = `<option value="">${message}</option>`;
+            }
+
+            function loadManualSlots() {
+                if (!manualTherapist || !manualDate || !manualType || !manualTime) return;
+                const id = manualTherapist.value;
+                const date = manualDate.value;
+                const type = manualType.value || 'online';
+
+                if (!id || !date) {
+                    resetManualTime('Select therapist/date first');
+                    return;
+                }
+
+                resetManualTime('Loading slots...');
+                jQuery.post(ajaxurl, { action: 'get_api_slots', nonce: crmAdminNonce, id: id, date: date, type: type }, function(res) {
+                    const slots = (res && Array.isArray(res.slots)) ? res.slots : [];
+                    const available = slots.filter(s => s && s.available && s.time);
+                    if (!available.length) {
+                        resetManualTime('No available time slots');
+                        return;
+                    }
+                    manualTime.innerHTML = '<option value="">Select time</option>';
+                    available.forEach(slot => {
+                        const opt = document.createElement('option');
+                        opt.value = slot.time;
+                        opt.textContent = slot.time;
+                        manualTime.appendChild(opt);
+                    });
+                });
+            }
+
+            if (manualTherapist) manualTherapist.addEventListener('change', loadManualSlots);
+            if (manualDate) manualDate.addEventListener('change', loadManualSlots);
+            if (manualType) manualType.addEventListener('change', loadManualSlots);
+
+            // 7. MANUAL BOOKING LOGIC (API #4)
             document.getElementById('manual-booking-form').onsubmit = function(e) {
                 e.preventDefault();
                 const btn = this.querySelector('button[type="submit"]');
+                const selectedTime = this.querySelector('select[name="sessionTime"]');
+                if (!selectedTime || !selectedTime.value) {
+                    alert('Please select a valid available time slot.');
+                    return;
+                }
                 btn.innerText = "Transmitting to CRM...";
                 const data = Object.fromEntries(new FormData(this).entries());
                 jQuery.post(ajaxurl, { action: 'submit_direct_booking', nonce: crmAdminNonce, booking_data: data }, function(res) {
@@ -535,7 +866,7 @@ function crm_dashboard_page() {
                 });
             };
 
-            // 7. MODAL BUILDER LOGIC
+            // 8. MODAL BUILDER LOGIC
             const modal = document.getElementById('builder-modal');
             const fieldBody = document.getElementById('crm-fields-body');
             const openBtn = document.getElementById('open-builder-btn');

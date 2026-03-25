@@ -163,6 +163,8 @@ class CRM_Connector_Core {
         // AJAX Handlers for Forms
         add_action('wp_ajax_save_crm_form_action', [$this, 'save_form_via_ajax']);
         add_action('wp_ajax_delete_crm_form_action', [$this, 'delete_form_via_ajax']);
+        add_action('wp_ajax_crm_mark_notifications_read', [$this, 'ajax_mark_notifications_read']);
+        add_action('wp_ajax_save_crm_settings_action', [$this, 'save_crm_settings_via_ajax']);
 
         // AJAX Handlers for CRM API Actions
         add_action('wp_ajax_get_api_slots', [$this, 'ajax_get_slots']);
@@ -541,8 +543,36 @@ class CRM_Connector_Core {
         if (!$this->verify_admin_ajax_request()) return;
         $api = new CRM_API_Handler();
         $data = isset($_POST['booking_data']) && is_array($_POST['booking_data']) ? $_POST['booking_data'] : [];
-        $result = $api->book_appointment($data);
-        wp_send_json($result);
+        $payload = $this->sanitize_frontend_booking_payload($data);
+        if (is_wp_error($payload)) {
+            wp_send_json(['ok' => false, 'message' => $payload->get_error_message()], 400);
+        }
+
+        $slot_res = $api->get_slots($payload['therapistId'], $payload['sessionDate'], $payload['sessionType']);
+        $slots = (is_array($slot_res) && !empty($slot_res['slots']) && is_array($slot_res['slots'])) ? $slot_res['slots'] : [];
+        $time_available = false;
+        foreach ($slots as $slot) {
+            if (!is_array($slot)) continue;
+            $slot_time = isset($slot['time']) ? sanitize_text_field((string) $slot['time']) : '';
+            if ($slot_time !== '' && strcasecmp($slot_time, $payload['sessionTime']) === 0 && !empty($slot['available'])) {
+                $time_available = true;
+                break;
+            }
+        }
+        if (!$time_available) {
+            wp_send_json(['ok' => false, 'message' => 'Selected time is no longer available. Please choose another slot.'], 409);
+        }
+
+        $result = $api->book_appointment($payload);
+        if (is_array($result) && !empty($result['appointment']['id'])) {
+            wp_send_json($result);
+        }
+
+        $booking_error = $api->get_last_error();
+        $message = is_array($result) && !empty($result['message'])
+            ? sanitize_text_field((string) $result['message'])
+            : ($booking_error !== '' ? $booking_error : 'Booking rejected by CRM.');
+        wp_send_json(['ok' => false, 'message' => $message], 502);
     }
 
     public function save_form_via_ajax() {
@@ -615,6 +645,58 @@ class CRM_Connector_Core {
         });
         update_option('crm_registered_forms_list', array_values($updated_forms));
         wp_send_json_success();
+    }
+
+    public function ajax_mark_notifications_read() {
+        if (!$this->verify_admin_ajax_request()) return;
+        $logs = get_option('crm_sync_logs', []);
+        if (!is_array($logs) || empty($logs)) {
+            wp_send_json_success(['unread' => 0]);
+        }
+
+        $first = $logs[0];
+        $log_id = isset($first['id']) ? sanitize_text_field((string) $first['id']) : '';
+        $log_date = isset($first['date']) ? sanitize_text_field((string) $first['date']) : '';
+        $sig = md5($log_id . '|' . $log_date);
+        update_user_meta(get_current_user_id(), 'crm_notifications_last_seen_sig', $sig);
+
+        wp_send_json_success(['unread' => 0]);
+    }
+
+    public function save_crm_settings_via_ajax() {
+        if (!$this->verify_admin_ajax_request()) return;
+
+        $provider = isset($_POST['provider']) ? sanitize_key((string) $_POST['provider']) : 'therapyflow_pro';
+        $allowed_providers = ['therapyflow_pro', 'therapyflow_demo', 'custom'];
+        if (!in_array($provider, $allowed_providers, true)) {
+            $provider = 'therapyflow_pro';
+        }
+
+        $api_url = isset($_POST['api_url']) ? trim((string) wp_unslash($_POST['api_url'])) : '';
+        $api_url = esc_url_raw($api_url);
+        if ($api_url === '' || !filter_var($api_url, FILTER_VALIDATE_URL)) {
+            wp_send_json_error(['message' => 'Please provide a valid CRM API URL.'], 400);
+        }
+
+        update_option('crm_selected_provider', $provider, false);
+        update_option('crm_api_base_url', untrailingslashit($api_url), false);
+
+        $api = new CRM_API_Handler();
+        $therapists = $api->get_all_therapists();
+        $api_error = $api->get_last_error();
+        $connected = is_array($therapists) && !empty($therapists) && $api_error === '';
+        $total_therapists = $connected ? count($therapists) : 0;
+        $total_appointments = $api->get_appointment_count();
+
+        wp_send_json_success([
+            'message' => 'CRM settings saved successfully.',
+            'connection_status' => $connected ? 'active' : 'inactive',
+            'status_label' => $connected ? 'Connected' : 'Disconnected',
+            'sync_status' => $connected ? 'Active' : 'Inactive',
+            'total_therapists' => $total_therapists,
+            'total_appointments' => $total_appointments,
+            'api_error' => $api_error,
+        ]);
     }
 
     private function verify_admin_ajax_request() {
@@ -734,7 +816,9 @@ class CRM_Connector_Core {
         if ($session_date < current_time('Y-m-d')) {
             return new WP_Error('past_date', 'Past dates are not allowed.');
         }
-        if (!preg_match('/^[0-9]{1,2}:[0-9]{2}\s?(AM|PM)$/i', $session_time)) {
+        $time_is_12h = preg_match('/^[0-9]{1,2}:[0-9]{2}\s?(AM|PM)$/i', $session_time);
+        $time_is_24h = preg_match('/^([01]?[0-9]|2[0-3]):[0-5][0-9]$/', $session_time);
+        if (!$time_is_12h && !$time_is_24h) {
             return new WP_Error('invalid_time', 'Invalid time format.');
         }
         if (!in_array($session_type, ['online', 'in-person'], true)) {

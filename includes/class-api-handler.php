@@ -11,6 +11,16 @@ class CRM_API_Handler {
         return (string) $this->last_error;
     }
 
+    public function __construct() {
+        $saved_url = trim((string) get_option('crm_api_base_url', 'https://demo.therapyflow.pro/api'));
+        if ($saved_url !== '') {
+            $saved_url = untrailingslashit($saved_url);
+            if (filter_var($saved_url, FILTER_VALIDATE_URL)) {
+                $this->base_url = $saved_url;
+            }
+        }
+    }
+
     private function clear_last_error() {
         $this->last_error = '';
     }
@@ -20,7 +30,7 @@ class CRM_API_Handler {
     }
 
     private function cache_key($namespace, $parts = []) {
-        $raw = $namespace . '|' . implode('|', array_map('strval', $parts));
+        $raw = $namespace . '|' . (string) $this->base_url . '|' . implode('|', array_map('strval', $parts));
         return 'crm_api_' . md5($raw);
     }
 
@@ -43,6 +53,47 @@ class CRM_API_Handler {
         set_transient($key, $value, max(1, (int) $ttl));
     }
 
+    private function normalize_slots_response($data) {
+        // Accept multiple upstream shapes and always return ['slots' => [...]]
+        if (is_array($data) && isset($data['slots']) && is_array($data['slots'])) {
+            return ['slots' => $data['slots']];
+        }
+        if (is_array($data) && isset($data['data']) && is_array($data['data']) && isset($data['data']['slots']) && is_array($data['data']['slots'])) {
+            return ['slots' => $data['data']['slots']];
+        }
+        if (is_array($data) && isset($data['payload']) && is_array($data['payload']) && isset($data['payload']['slots']) && is_array($data['payload']['slots'])) {
+            return ['slots' => $data['payload']['slots']];
+        }
+        // If API returns a plain array of slot rows/strings, wrap it.
+        if (is_array($data) && isset($data[0])) {
+            return ['slots' => $data];
+        }
+        return ['slots' => []];
+    }
+
+    private function normalize_booking_payload($data) {
+        $payload = is_array($data) ? $data : [];
+        $session_date = isset($payload['sessionDate']) ? sanitize_text_field((string) $payload['sessionDate']) : '';
+        $session_time = isset($payload['sessionTime']) ? sanitize_text_field((string) $payload['sessionTime']) : '';
+        $session_start_utc = isset($payload['sessionStartUtc']) ? sanitize_text_field((string) $payload['sessionStartUtc']) : '';
+
+        // Build a UTC start when client only sends date + time.
+        if ($session_start_utc === '' && $session_date !== '' && $session_time !== '') {
+            $tz = function_exists('wp_timezone') ? wp_timezone() : new DateTimeZone('UTC');
+            $dt = false;
+            foreach (['Y-m-d g:i A', 'Y-m-d g:iA', 'Y-m-d H:i'] as $fmt) {
+                $dt = DateTime::createFromFormat($fmt, $session_date . ' ' . $session_time, $tz);
+                if ($dt instanceof DateTime) break;
+            }
+            if ($dt instanceof DateTime) {
+                $dt->setTimezone(new DateTimeZone('UTC'));
+                $payload['sessionStartUtc'] = $dt->format('Y-m-d\TH:i:s\Z');
+            }
+        }
+
+        return $payload;
+    }
+
     /**
      * 1) List All Therapists
      * GET /all-therapist
@@ -50,6 +101,10 @@ class CRM_API_Handler {
      */
     public function get_all_therapists() {
         $this->clear_last_error();
+        if (empty($this->base_url)) {
+            $this->set_last_error('CRM API URL is not configured.');
+            return [];
+        }
         $cached = $this->cache_read('all_therapists');
         if (is_array($cached)) return $cached;
 
@@ -61,7 +116,6 @@ class CRM_API_Handler {
             'headers'     => [
                 'User-Agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/121.0.0.0',
                 'Accept'     => 'application/json',
-                'Referer'    => 'https://demo.therapyflow.pro/',
             ],
         ]);
 
@@ -110,6 +164,10 @@ class CRM_API_Handler {
      */
     public function get_therapist_profile($id) {
         $this->clear_last_error();
+        if (empty($this->base_url)) {
+            $this->set_last_error('CRM API URL is not configured.');
+            return null;
+        }
         if (empty($id)) return null;
         $id = sanitize_text_field((string) $id);
         if ($id === '') return null;
@@ -155,14 +213,18 @@ class CRM_API_Handler {
      */
     public function get_slots($id, $date, $type = 'online') {
         $this->clear_last_error();
+        if (empty($this->base_url)) {
+            $this->set_last_error('CRM API URL is not configured.');
+            return [];
+        }
         if (empty($id) || empty($date)) return [];
         $id = sanitize_text_field((string) $id);
         $date = sanitize_text_field((string) $date);
         $type = in_array($type, ['online', 'in-person'], true) ? $type : 'online';
         if ($id === '' || $date === '') return [];
 
-        $cached = $this->cache_read('slots', [$id, $date, $type]);
-        if (is_array($cached)) return $cached;
+        // Do not cache slot availability aggressively.
+        // Slots change quickly after bookings and stale cache causes end-step booking failures.
 
         $url = $this->base_url . "/public/therapists/{$id}/available-slots?date={$date}&sessionType={$type}";
         
@@ -193,8 +255,8 @@ class CRM_API_Handler {
             $this->set_last_error('CRM slots API returned invalid JSON.');
             return [];
         }
-        $this->cache_write('slots', [$id, $date, $type], $data, 60);
-        return $data;
+        $normalized = $this->normalize_slots_response($data);
+        return $normalized;
     }
 
     /**
@@ -204,8 +266,14 @@ class CRM_API_Handler {
      */
     public function book_appointment($data) {
         $this->clear_last_error();
+        if (empty($this->base_url)) {
+            $this->set_last_error('CRM API URL is not configured.');
+            return false;
+        }
         $url = $this->base_url . '/public/book-appointment';
         
+        $payload = $this->normalize_booking_payload($data);
+
         $response = wp_remote_post($url, [
             'method'    => 'POST',
             'timeout'   => 30,
@@ -215,7 +283,7 @@ class CRM_API_Handler {
                 'Accept'       => 'application/json',
                 'User-Agent'   => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/121.0.0.0'
             ],
-            'body'      => wp_json_encode($data),
+            'body'      => wp_json_encode($payload),
         ]);
 
         if (is_wp_error($response)) {
@@ -228,11 +296,21 @@ class CRM_API_Handler {
         $body = wp_remote_retrieve_body($response);
         $result = json_decode($body, true);
         if (!is_array($result)) {
-            $this->set_last_error('CRM booking API returned invalid JSON.');
+            $plain = trim((string) $body);
+            $this->set_last_error($plain !== '' ? $plain : 'CRM booking API returned invalid JSON.');
             return false;
         }
         if ($code < 200 || $code >= 300) {
-            $api_message = !empty($result['message']) ? sanitize_text_field((string) $result['message']) : ('CRM booking API returned HTTP ' . $code . '.');
+            $api_message = '';
+            if (!empty($result['message'])) {
+                $api_message = sanitize_text_field((string) $result['message']);
+            } elseif (!empty($result['error'])) {
+                $api_message = sanitize_text_field((string) $result['error']);
+            } elseif (!empty($result['errors']) && is_array($result['errors'])) {
+                $first = reset($result['errors']);
+                if (is_string($first)) $api_message = sanitize_text_field($first);
+            }
+            if ($api_message === '') $api_message = 'CRM booking API returned HTTP ' . $code . '.';
             $this->set_last_error($api_message);
         }
 
@@ -244,9 +322,9 @@ class CRM_API_Handler {
             // Add new booking to the top of the log
             array_unshift($logs, [
                 'id' => $result['appointment']['id'],
-                'fullName' => isset($data['fullName']) ? $data['fullName'] : 'Unknown',
+                'fullName' => isset($payload['fullName']) ? $payload['fullName'] : 'Unknown',
                 'date' => current_time('mysql'),
-                'type' => isset($data['sessionType']) ? $data['sessionType'] : 'online'
+                'type' => isset($payload['sessionType']) ? $payload['sessionType'] : 'online'
             ]);
             
             // Keep only latest 100 logs to save database space

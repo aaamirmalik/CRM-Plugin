@@ -58,6 +58,58 @@ class CRM_Booking_Flow_Shortcodes {
         return $res['slots'];
     }
 
+    private function normalize_slots($res) {
+        $raw = $this->slots_array_from_response($res);
+        if (!is_array($raw)) return [];
+        $out = [];
+        foreach ($raw as $slot) {
+            if (is_string($slot)) {
+                $time = sanitize_text_field($slot);
+                if ($time !== '') $out[] = ['time' => $time, 'available' => true];
+                continue;
+            }
+            if (!is_array($slot)) continue;
+            $time = '';
+            foreach (['time', 'slot', 'sessionTime', 'startTime'] as $key) {
+                if (!empty($slot[$key])) {
+                    $time = sanitize_text_field((string) $slot[$key]);
+                    break;
+                }
+            }
+            if ($time === '') continue;
+
+            $available = true;
+            if (array_key_exists('available', $slot)) {
+                $available = in_array($slot['available'], [true, 1, '1', 'true'], true);
+            } elseif (array_key_exists('isAvailable', $slot)) {
+                $available = in_array($slot['isAvailable'], [true, 1, '1', 'true'], true);
+            } elseif (array_key_exists('booked', $slot)) {
+                $available = !in_array($slot['booked'], [true, 1, '1', 'true'], true);
+            } elseif (array_key_exists('isBooked', $slot)) {
+                $available = !in_array($slot['isBooked'], [true, 1, '1', 'true'], true);
+            } elseif (!empty($slot['status']) && is_string($slot['status'])) {
+                $status = strtolower(trim((string) $slot['status']));
+                $available = !in_array($status, ['booked', 'unavailable', 'busy', 'taken'], true);
+            }
+
+            $out[] = ['time' => $time, 'available' => $available];
+        }
+        return $out;
+    }
+
+    private function is_time_available_in_slots($slots, $session_time) {
+        if (!is_array($slots) || $session_time === '') return false;
+        foreach ($slots as $slot) {
+            if (!is_array($slot)) continue;
+            $slot_time = isset($slot['time']) ? sanitize_text_field((string) $slot['time']) : '';
+            if ($slot_time === '') continue;
+            if (strcasecmp($slot_time, $session_time) === 0 && !empty($slot['available'])) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private function has_available_slot($res) {
         $slots = $this->slots_array_from_response($res);
         if (empty($slots)) return false;
@@ -93,7 +145,7 @@ class CRM_Booking_Flow_Shortcodes {
         if ($api_error !== '') {
             wp_send_json(['slots' => [], 'used_fallback' => false, 'message' => $api_error], 502);
         }
-        $slots = $this->slots_array_from_response($res);
+        $slots = $this->normalize_slots($res);
 
         if (empty($slots)) {
             wp_send_json(['slots' => [], 'used_fallback' => false, 'message' => 'No slots available for selected date.']);
@@ -174,7 +226,9 @@ class CRM_Booking_Flow_Shortcodes {
         if (!empty($phone) && !preg_match('/^[0-9\+\-\s\(\)]{7,20}$/', $phone)) wp_send_json(['ok' => false, 'message' => 'Enter a valid phone number.']);
         if (!$this->is_valid_date($session_date)) wp_send_json(['ok' => false, 'message' => 'Invalid date.']);
         if ($session_date < current_time('Y-m-d')) wp_send_json(['ok' => false, 'message' => 'Past dates are not allowed.']);
-        if (!preg_match('/^[0-9]{1,2}:[0-9]{2}\s?(AM|PM)$/i', $session_time)) wp_send_json(['ok' => false, 'message' => 'Invalid time format.']);
+        $is_12h = preg_match('/^[0-9]{1,2}:[0-9]{2}\s?(AM|PM)$/i', $session_time);
+        $is_24h = preg_match('/^([01]?[0-9]|2[0-3]):[0-5][0-9]$/', $session_time);
+        if (!$is_12h && !$is_24h) wp_send_json(['ok' => false, 'message' => 'Invalid time format.']);
         if (!in_array($session_type, ['online', 'in-person'], true)) wp_send_json(['ok' => false, 'message' => 'Invalid appointment type.']);
         if (strlen($reason) > 1000) wp_send_json(['ok' => false, 'message' => 'Reason is too long.']);
 
@@ -184,17 +238,8 @@ class CRM_Booking_Flow_Shortcodes {
         if ($api_error !== '') {
             wp_send_json(['ok' => false, 'message' => $api_error], 502);
         }
-        $slots = $this->slots_array_from_response($slot_res);
-        $time_available = false;
-        foreach ($slots as $s) {
-            if (!is_array($s)) continue;
-            $slot_time = isset($s['time']) ? sanitize_text_field($s['time']) : '';
-            if (strcasecmp($slot_time, $session_time) === 0 && !empty($s['available'])) {
-                $time_available = true;
-                break;
-            }
-        }
-        if (!$time_available) {
+        $slots = $this->normalize_slots($slot_res);
+        if (!$this->is_time_available_in_slots($slots, $session_time)) {
             wp_send_json(['ok' => false, 'message' => 'Selected time is no longer available. Please choose another slot.']);
         }
 
@@ -259,7 +304,7 @@ class CRM_Booking_Flow_Shortcodes {
                 .crm-day{width:40px;height:40px;margin:0 auto;border-radius:50%;border:1px solid transparent;background:#fff;cursor:pointer}
                 .crm-day.active{background:var(--pr);color:#fff}.crm-day.disabled{opacity:.4;cursor:not-allowed}.crm-day.available{background:#f2fbf5;border-color:#b7dfb2;color:#1b6d12}
                 .crm-day.available.active{background:var(--pr);border-color:var(--pr);color:#fff}
-                .crm-slots h4{margin:0 0 4px}.crm-slot-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}.crm-slot{padding:12px;border:1px solid var(--bd);border-radius:8px;background:#fff;cursor:pointer}.crm-slot.active{background:var(--pr);border-color:var(--pr);color:#fff}.crm-slot.disabled{opacity:.5;cursor:not-allowed}
+                .crm-slots h4{margin:0 0 4px}.crm-slot-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}.crm-slot{padding:12px;border:1px solid var(--bd);border-radius:8px;background:#fff;cursor:pointer}.crm-slot.active{background:var(--pr);border-color:var(--pr);color:#fff}.crm-slot.disabled{opacity:.55;cursor:not-allowed}.crm-slot.booked{background:#fef2f2;border-color:#ef4444;color:#b91c1c;text-decoration:line-through}.crm-slot.recently-booked{box-shadow:0 0 0 2px #ef4444 inset}
                 .crm-foot{margin-top:24px;padding-top:16px;border-top:1px solid var(--bd);display:flex;justify-content:space-between;align-items:center;gap:16px}.crm-btn{background:var(--pr);color:#fff;border:none;border-radius:999px;padding:12px 22px;cursor:pointer}.crm-status{font-size:12px;color:#6b7280}
                 .crm-step{display:none}.crm-step.active{display:block}.crm-d-grid{display:grid;grid-template-columns:1fr 340px;gap:20px}.crm-row2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
                 .crm-field{margin-bottom:14px}.crm-field label{display:block;font-size:13px;font-weight:600;margin-bottom:6px}.crm-input,.crm-textarea{width:100%;border:1px solid var(--bd);border-radius:8px;padding:11px}.crm-textarea{min-height:95px;resize:vertical}
@@ -367,6 +412,7 @@ class CRM_Booking_Flow_Shortcodes {
                 const bookingNonce='<?php echo esc_js(wp_create_nonce('crm_public_booking_nonce')); ?>';
                 let therapistId=root.dataset.therapistId||'', serviceId=root.dataset.serviceId||'50', sessionType=root.dataset.sessionType||'online';
                 let viewDate=new Date(), selectedDate='', selectedTime='';
+                let recentlyBookedTime='';
                 let availabilityMap={};
                 const monthTitle=document.getElementById('crm-month-title'), cal=document.getElementById('crm-calendar-grid'), slotGrid=document.getElementById('crm-slot-grid');
                 const dateTitle=document.getElementById('crm-date-title'), summary=document.getElementById('crm-summary'), status=document.getElementById('crm-status');
@@ -386,14 +432,30 @@ class CRM_Booking_Flow_Shortcodes {
 
                 function drawCal(){const y=viewDate.getFullYear(),m=viewDate.getMonth(); monthTitle.textContent=viewDate.toLocaleString(undefined,{month:'long',year:'numeric'}); cal.innerHTML=''; dayNames.forEach(n=>{const h=document.createElement('div');h.className='crm-day-head';h.textContent=n;cal.appendChild(h);}); const first=new Date(y,m,1).getDay(),daysIn=new Date(y,m+1,0).getDate(),prevDays=new Date(y,m,0).getDate(); for(let i=first-1;i>=0;i--){const d=document.createElement('div');d.className='crm-day disabled';d.textContent=String(prevDays-i);cal.appendChild(d);} for(let day=1;day<=daysIn;day++){const dt=new Date(y,m,day),key=iso(dt),weekday=dt.getDay(),b=document.createElement('button'); b.type='button';b.className='crm-day';b.textContent=day;b.dataset.iso=key; const isPast=key<todayIso; const isWeekend=(weekday===0||weekday===6); const isAvailable=!!availabilityMap[key]; if(availabilityLoaded && isAvailable)b.classList.add('available'); if(selectedDate===key)b.classList.add('active'); const canClick = availabilityLoaded && !isPast && !isWeekend && isAvailable; if(!canClick)b.classList.add('disabled'); b.onclick=()=>{if(!canClick)return;selectedDate=key;selectedTime='';drawCal();loadSlots();}; cal.appendChild(b);} const total=first+daysIn,tail=(7-(total%7))%7;for(let i=1;i<=tail;i++){const d=document.createElement('div');d.className='crm-day disabled';d.textContent=String(i);cal.appendChild(d);}}
 
-                function renderSlots(slots){slotGrid.innerHTML=''; if(!Array.isArray(slots)||!slots.length){slotGrid.innerHTML='<div>No slots available.</div>';status.textContent='No slots available for selected date.';return;} slots.forEach(s=>{const t=s.time||'',av=!!s.available,b=document.createElement('button');b.type='button';b.className='crm-slot';b.textContent=t;if(!av)b.classList.add('disabled'); b.onclick=()=>{if(!av)return;document.querySelectorAll('.crm-slot').forEach(x=>x.classList.remove('active'));b.classList.add('active');selectedTime=t;updateSummary();};slotGrid.appendChild(b);}); status.textContent='Showing live slots from API.';}
-                function loadSlots(){if(!selectedDate||!therapistId){slotGrid.innerHTML='<div>Select therapist and date.</div>';return;} dateTitle.textContent=new Date(selectedDate+'T00:00:00').toLocaleDateString(undefined,{weekday:'long',month:'long',day:'numeric'}); slotGrid.innerHTML='<div>Loading slots...</div>'; const body=new URLSearchParams(); body.append('action','crm_booking_flow_slots'); body.append('nonce',bookingNonce); body.append('therapist_id',therapistId); body.append('date',selectedDate); body.append('session_type',sessionType); fetch(ajaxUrl,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded; charset=UTF-8'},body:body.toString()}).then(r=>r.json()).then(res=>{if(res&&Array.isArray(res.slots))renderSlots(res.slots);else {renderSlots([]); if(res&&res.message)status.textContent=res.message;}}).catch(()=>{renderSlots([]); status.textContent='Could not load slots from API.';});}
+                function normalizeSlots(raw){
+                    if(!Array.isArray(raw)) return [];
+                    return raw.map(s=>{
+                        if(typeof s==='string') return {time:s,available:true};
+                        const time=(s&&typeof s==='object') ? String(s.time||s.slot||s.sessionTime||s.startTime||'') : '';
+                        let available=true;
+                        if(s&&typeof s==='object'){
+                            if(Object.prototype.hasOwnProperty.call(s,'available')) available=(s.available===true||s.available===1||s.available==='1');
+                            else if(Object.prototype.hasOwnProperty.call(s,'isAvailable')) available=(s.isAvailable===true||s.isAvailable===1||s.isAvailable==='1');
+                            else if(Object.prototype.hasOwnProperty.call(s,'booked')) available=!(s.booked===true||s.booked===1||s.booked==='1');
+                            else if(Object.prototype.hasOwnProperty.call(s,'isBooked')) available=!(s.isBooked===true||s.isBooked===1||s.isBooked==='1');
+                            else if(typeof s.status==='string'){const st=s.status.toLowerCase(); available=!(st==='booked'||st==='unavailable'||st==='busy'||st==='taken');}
+                        }
+                        return {time,available};
+                    }).filter(x=>x.time!=='');
+                }
+                function renderSlots(slots){slotGrid.innerHTML=''; if(!Array.isArray(slots)||!slots.length){slotGrid.innerHTML='<div>No slots available.</div>';status.textContent='No slots available for selected date.';return;} let recentlyFound=false; slots.forEach(s=>{const t=s.time||'',av=!!s.available,b=document.createElement('button');b.type='button';b.className='crm-slot';b.textContent=t;if(!av){b.classList.add('disabled','booked');b.disabled=true; if(recentlyBookedTime && t.toLowerCase()===String(recentlyBookedTime).toLowerCase()){b.classList.add('recently-booked'); recentlyFound=true;}} b.onclick=()=>{if(!av)return;document.querySelectorAll('.crm-slot').forEach(x=>x.classList.remove('active'));b.classList.add('active');selectedTime=t;updateSummary();};slotGrid.appendChild(b);}); if(recentlyBookedTime && !recentlyFound) recentlyBookedTime=''; status.textContent='Showing live slots from API.';}
+                function loadSlots(){if(!selectedDate||!therapistId){slotGrid.innerHTML='<div>Select therapist and date.</div>';return Promise.resolve([]);} dateTitle.textContent=new Date(selectedDate+'T00:00:00').toLocaleDateString(undefined,{weekday:'long',month:'long',day:'numeric'}); slotGrid.innerHTML='<div>Loading slots...</div>'; const body=new URLSearchParams(); body.append('action','crm_booking_flow_slots'); body.append('nonce',bookingNonce); body.append('therapist_id',therapistId); body.append('date',selectedDate); body.append('session_type',sessionType); return fetch(ajaxUrl,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded; charset=UTF-8'},body:body.toString()}).then(r=>r.json()).then(res=>{const normalized=normalizeSlots((res&&Array.isArray(res.slots))?res.slots:[]); renderSlots(normalized); if(res&&res.message)status.textContent=res.message; return normalized;}).catch(()=>{renderSlots([]); status.textContent='Could not load slots from API.'; return [];});}
                 function loadMonthAvailability(){availabilityMap={}; availabilityLoaded=false; drawCal(); if(!therapistId){status.textContent='Select therapist to load availability.';return;} status.textContent='Loading availability...'; const cacheKey=`${therapistId}|${sessionType}|${viewDate.getFullYear()}-${viewDate.getMonth()+1}`; if(monthAvailabilityCache[cacheKey]){availabilityMap=monthAvailabilityCache[cacheKey]; availabilityLoaded=true; if(selectedDate && !availabilityMap[selectedDate]){selectedDate=''; selectedTime=''; updateSummary(); slotGrid.innerHTML='<div>Select an available highlighted day.</div>'; dateTitle.textContent='Select a date';} drawCal(); status.textContent='Availability loaded.'; return;} const requestToken=++monthRequestToken; const body=new URLSearchParams(); body.append('action','crm_booking_flow_month_availability'); body.append('nonce',bookingNonce); body.append('therapist_id',therapistId); body.append('year',String(viewDate.getFullYear())); body.append('month',String(viewDate.getMonth()+1)); body.append('session_type',sessionType); fetch(ajaxUrl,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded; charset=UTF-8'},body:body.toString()}).then(r=>r.json()).then(res=>{if(requestToken!==monthRequestToken)return; if(res&&res.message){availabilityMap={}; availabilityLoaded=true; drawCal(); status.textContent=res.message; return;} if(res&&res.availability&&typeof res.availability==='object'){availabilityMap=res.availability; monthAvailabilityCache[cacheKey]=availabilityMap;} availabilityLoaded=true; if(selectedDate && !availabilityMap[selectedDate]){selectedDate=''; selectedTime=''; updateSummary(); slotGrid.innerHTML='<div>Select an available highlighted day.</div>'; dateTitle.textContent='Select a date';} drawCal(); status.textContent='Availability loaded.';}).catch(()=>{if(requestToken!==monthRequestToken)return; availabilityMap={}; availabilityLoaded=true; drawCal(); status.textContent='Could not load availability.';});}
                 function scheduleMonthAvailability(){if(monthDebounceTimer)clearTimeout(monthDebounceTimer); monthDebounceTimer=setTimeout(loadMonthAvailability,80);}
                 function updateSummary(){if(!selectedDate||!selectedTime){summary.textContent='No time selected';return;} const nice=new Date(selectedDate+'T00:00:00').toLocaleDateString(undefined,{weekday:'long',month:'long',day:'numeric'}); summary.textContent=`${nice} at ${selectedTime}`;}
                 function openDetails(){if(!therapistId){alert('Please select a therapist first.');return;} if(!services[serviceId]){alert('Please select a valid service.');return;} if(!selectedDate||!selectedTime){alert('Please select a date and time first.');return;} if(selectedDate<todayIso){alert('Past dates are not allowed.');return;} stepCalendar.classList.remove('active'); stepDetails.classList.add('active'); const opt=therapistSelect.options[therapistSelect.selectedIndex]; document.getElementById('crm-sum-therapist').textContent=opt?opt.textContent.trim():'-'; const nice=new Date(selectedDate+'T00:00:00').toLocaleDateString(undefined,{weekday:'short',month:'short',day:'numeric'}); document.getElementById('crm-sum-dt').textContent=`${nice}, ${selectedTime}`; const sSel=document.getElementById('crm-session-type'); sSel.value=sessionType; document.getElementById('crm-sum-loc').textContent=sSel.value==='in-person'?'In-Person':'Online (Video)';}
                 function closeDetails(e){if(e)e.preventDefault(); stepDetails.classList.remove('active'); stepCalendar.classList.add('active');}
-                function submitBooking(){const msg=document.getElementById('crm-msg'),btn=document.getElementById('crm-confirm-btn'); if(!document.getElementById('crm-consent-privacy').checked||!document.getElementById('crm-consent-ohip').checked){msg.style.color='#dc2626';msg.textContent='Please accept both consent checkboxes.';return;} const first=document.getElementById('crm-first-name').value.trim(),last=document.getElementById('crm-last-name').value.trim(),email=document.getElementById('crm-email').value.trim(),phone=document.getElementById('crm-phone').value.trim(),reason=document.getElementById('crm-reason').value.trim(); if(first.length<2||last.length<2){msg.style.color='#dc2626';msg.textContent='Enter valid first and last name.';return;} if(!validEmail(email)){msg.style.color='#dc2626';msg.textContent='Enter a valid email address.';return;} if(phone && !validPhone(phone)){msg.style.color='#dc2626';msg.textContent='Enter a valid phone number.';return;} if(reason.length>1000){msg.style.color='#dc2626';msg.textContent='Reason is too long.';return;} if(!therapistId||!services[serviceId]||!selectedDate||!selectedTime){msg.style.color='#dc2626';msg.textContent='Incomplete booking selection.';return;} const sSel=document.getElementById('crm-session-type'); if(!['online','in-person'].includes(sSel.value)){msg.style.color='#dc2626';msg.textContent='Invalid appointment type.';return;} btn.disabled=true; btn.textContent='Confirming...'; msg.textContent=''; const body=new URLSearchParams(); body.append('action','crm_booking_flow_submit'); body.append('nonce',bookingNonce); body.append('booking_data[first_name]',first); body.append('booking_data[last_name]',last); body.append('booking_data[email]',email); body.append('booking_data[phone]',phone); body.append('booking_data[reason]',reason); body.append('booking_data[therapist_id]',therapistId); body.append('booking_data[service_id]',serviceId); body.append('booking_data[session_date]',selectedDate); body.append('booking_data[session_time]',selectedTime); body.append('booking_data[duration]','50'); body.append('booking_data[session_type]',sSel.value||'online'); fetch(ajaxUrl,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded; charset=UTF-8'},body:body.toString()}).then(r=>r.json()).then(res=>{if(res&&res.ok){msg.style.color='#16a34a';msg.textContent='Appointment confirmed successfully.'+(res.appointment&&res.appointment.id?(' ID: '+res.appointment.id):'');}else{msg.style.color='#dc2626';msg.textContent=(res&&res.message)?res.message:'Booking failed.';}}).catch(()=>{msg.style.color='#dc2626';msg.textContent='Booking API unavailable right now.';}).finally(()=>{btn.disabled=false;btn.textContent='Confirm Appointment';});}
+                function submitBooking(){const msg=document.getElementById('crm-msg'),btn=document.getElementById('crm-confirm-btn'); if(!document.getElementById('crm-consent-privacy').checked||!document.getElementById('crm-consent-ohip').checked){msg.style.color='#dc2626';msg.textContent='Please accept both consent checkboxes.';return;} const first=document.getElementById('crm-first-name').value.trim(),last=document.getElementById('crm-last-name').value.trim(),email=document.getElementById('crm-email').value.trim(),phone=document.getElementById('crm-phone').value.trim(),reason=document.getElementById('crm-reason').value.trim(); if(first.length<2||last.length<2){msg.style.color='#dc2626';msg.textContent='Enter valid first and last name.';return;} if(!validEmail(email)){msg.style.color='#dc2626';msg.textContent='Enter a valid email address.';return;} if(phone && !validPhone(phone)){msg.style.color='#dc2626';msg.textContent='Enter a valid phone number.';return;} if(reason.length>1000){msg.style.color='#dc2626';msg.textContent='Reason is too long.';return;} if(!therapistId||!services[serviceId]||!selectedDate||!selectedTime){msg.style.color='#dc2626';msg.textContent='Incomplete booking selection.';return;} const sSel=document.getElementById('crm-session-type'); if(!['online','in-person'].includes(sSel.value)){msg.style.color='#dc2626';msg.textContent='Invalid appointment type.';return;} btn.disabled=true; btn.textContent='Confirming...'; msg.textContent=''; const slotBody=new URLSearchParams(); slotBody.append('action','crm_booking_flow_slots'); slotBody.append('nonce',bookingNonce); slotBody.append('therapist_id',therapistId); slotBody.append('date',selectedDate); slotBody.append('session_type',sSel.value||'online'); fetch(ajaxUrl,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded; charset=UTF-8'},body:slotBody.toString()}).then(r=>r.json()).then(slotRes=>{const live=normalizeSlots((slotRes&&Array.isArray(slotRes.slots))?slotRes.slots:[]); const stillAvailable=live.some(x=>x.time.toLowerCase()===String(selectedTime).toLowerCase() && x.available); if(!stillAvailable){recentlyBookedTime=selectedTime; selectedTime=''; updateSummary(); stepDetails.classList.remove('active'); stepCalendar.classList.add('active'); renderSlots(live); status.style.color='#dc2626'; status.textContent='This time slot is no longer available. Please select another highlighted time.'; msg.style.color='#dc2626'; msg.textContent='This time slot is no longer available. Please select another highlighted time.'; btn.disabled=false; btn.textContent='Confirm Appointment'; return null;} const body=new URLSearchParams(); body.append('action','crm_booking_flow_submit'); body.append('nonce',bookingNonce); body.append('booking_data[first_name]',first); body.append('booking_data[last_name]',last); body.append('booking_data[email]',email); body.append('booking_data[phone]',phone); body.append('booking_data[reason]',reason); body.append('booking_data[therapist_id]',therapistId); body.append('booking_data[service_id]',serviceId); body.append('booking_data[session_date]',selectedDate); body.append('booking_data[session_time]',selectedTime); body.append('booking_data[duration]','50'); body.append('booking_data[session_type]',sSel.value||'online'); return fetch(ajaxUrl,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded; charset=UTF-8'},body:body.toString()}).then(r=>r.json());}).then(res=>{if(!res)return; if(res&&res.ok){msg.style.color='#16a34a';msg.textContent='Appointment confirmed successfully.'+(res.appointment&&res.appointment.id?(' ID: '+res.appointment.id):'');}else{const serverMsg=(res&&res.message)?String(res.message):'Booking failed.'; msg.style.color='#dc2626'; msg.textContent=serverMsg; const lower=serverMsg.toLowerCase(); if(lower.includes('no longer available')||lower.includes('select another time')||lower.includes('not available')){recentlyBookedTime=selectedTime; selectedTime=''; updateSummary(); stepDetails.classList.remove('active'); stepCalendar.classList.add('active'); status.style.color='#dc2626'; status.textContent='That slot was just booked. Please choose another highlighted time.'; loadSlots();}}}).catch(()=>{msg.style.color='#dc2626';msg.textContent='Booking API unavailable right now.';}).finally(()=>{btn.disabled=false;btn.textContent='Confirm Appointment';});}
 
                 document.getElementById('crm-prev').onclick=()=>{viewDate=new Date(viewDate.getFullYear(),viewDate.getMonth()-1,1);scheduleMonthAvailability();};
                 document.getElementById('crm-next').onclick=()=>{viewDate=new Date(viewDate.getFullYear(),viewDate.getMonth()+1,1);scheduleMonthAvailability();};
@@ -402,7 +464,7 @@ class CRM_Booking_Flow_Shortcodes {
                 document.getElementById('crm-confirm-btn').onclick=submitBooking;
                 document.getElementById('crm-service-list').addEventListener('click',e=>{const b=e.target.closest('.crm-service-item'); if(!b) return; serviceId=b.dataset.service; localStorage.setItem(serviceStorageKey, serviceId); applyServiceActive();});
                 therapistSelect.addEventListener('change',()=>{therapistId=therapistSelect.value||''; selectedDate=''; selectedTime=''; dateTitle.textContent='Select a date'; slotGrid.innerHTML='<div>Select an available highlighted day.</div>'; updateSummary(); scheduleMonthAvailability();});
-                document.getElementById('crm-session-type').addEventListener('change',function(){sessionType=this.value; document.getElementById('crm-sum-loc').textContent=this.value==='in-person'?'In-Person':'Online (Video)'; selectedDate=''; selectedTime=''; dateTitle.textContent='Select a date'; slotGrid.innerHTML='<div>Select an available highlighted day.</div>'; updateSummary(); scheduleMonthAvailability();});
+                document.getElementById('crm-session-type').addEventListener('change',function(){sessionType=this.value; document.getElementById('crm-sum-loc').textContent=this.value==='in-person'?'In-Person':'Online (Video)'; if(stepCalendar.classList.contains('active')){selectedDate=''; selectedTime=''; dateTitle.textContent='Select a date'; slotGrid.innerHTML='<div>Select an available highlighted day.</div>'; updateSummary(); scheduleMonthAvailability();}});
 
                 let storedService='';
                 try { storedService=localStorage.getItem(serviceStorageKey); } catch(e) { storedService=''; }

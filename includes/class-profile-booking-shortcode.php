@@ -177,6 +177,58 @@ class CRM_Profile_Booking_Shortcode {
         return $value;
     }
 
+    private function normalize_slots($res) {
+        $raw = (is_array($res) && !empty($res['slots']) && is_array($res['slots'])) ? $res['slots'] : [];
+        if (!is_array($raw)) return [];
+        $out = [];
+        foreach ($raw as $slot) {
+            if (is_string($slot)) {
+                $time = sanitize_text_field($slot);
+                if ($time !== '') $out[] = ['time' => $time, 'available' => true];
+                continue;
+            }
+            if (!is_array($slot)) continue;
+            $time = '';
+            foreach (['time', 'slot', 'sessionTime', 'startTime'] as $key) {
+                if (!empty($slot[$key])) {
+                    $time = sanitize_text_field((string) $slot[$key]);
+                    break;
+                }
+            }
+            if ($time === '') continue;
+
+            $available = true;
+            if (array_key_exists('available', $slot)) {
+                $available = in_array($slot['available'], [true, 1, '1', 'true'], true);
+            } elseif (array_key_exists('isAvailable', $slot)) {
+                $available = in_array($slot['isAvailable'], [true, 1, '1', 'true'], true);
+            } elseif (array_key_exists('booked', $slot)) {
+                $available = !in_array($slot['booked'], [true, 1, '1', 'true'], true);
+            } elseif (array_key_exists('isBooked', $slot)) {
+                $available = !in_array($slot['isBooked'], [true, 1, '1', 'true'], true);
+            } elseif (!empty($slot['status']) && is_string($slot['status'])) {
+                $status = strtolower(trim((string) $slot['status']));
+                $available = !in_array($status, ['booked', 'unavailable', 'busy', 'taken'], true);
+            }
+
+            $out[] = ['time' => $time, 'available' => $available];
+        }
+        return $out;
+    }
+
+    private function is_time_available_in_slots($slots, $session_time) {
+        if (!is_array($slots) || $session_time === '') return false;
+        foreach ($slots as $slot) {
+            if (!is_array($slot)) continue;
+            $slot_time = isset($slot['time']) ? sanitize_text_field((string) $slot['time']) : '';
+            if ($slot_time === '') continue;
+            if (strcasecmp($slot_time, $session_time) === 0 && !empty($slot['available'])) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private function normalize_name_key($value) {
         $value = (string) $value;
         $value = strtolower($value);
@@ -220,7 +272,7 @@ class CRM_Profile_Booking_Shortcode {
         if ($api_error !== '') {
             wp_send_json(['slots' => [], 'used_fallback' => false, 'message' => $api_error], 502);
         }
-        $slots = (is_array($res) && !empty($res['slots']) && is_array($res['slots'])) ? $res['slots'] : [];
+        $slots = $this->normalize_slots($res);
         if (empty($slots)) {
             wp_send_json(['slots' => [], 'used_fallback' => false, 'message' => 'No slots available for selected date.']);
         }
@@ -251,7 +303,20 @@ class CRM_Profile_Booking_Shortcode {
             'sessionType' => !empty($data['sessionType']) ? sanitize_text_field($data['sessionType']) : 'online',
             'notes' => 'Booked via profile widget'
         ];
+        if (empty($payload['therapistId']) || empty($payload['sessionDate']) || empty($payload['sessionTime'])) {
+            wp_send_json(['ok' => false, 'message' => 'Please select therapist, date and time.', 'used_fallback' => false], 400);
+        }
+        if (!in_array($payload['sessionType'], ['online', 'in-person'], true)) {
+            $payload['sessionType'] = 'online';
+        }
+
         $api = new CRM_API_Handler();
+        $slot_res = $api->get_slots($payload['therapistId'], $payload['sessionDate'], $payload['sessionType']);
+        $slots = $this->normalize_slots($slot_res);
+        if (!$this->is_time_available_in_slots($slots, $payload['sessionTime'])) {
+            wp_send_json(['ok' => false, 'message' => 'This time slot is no longer available. Please select another time.', 'used_fallback' => false], 409);
+        }
+
         $result = $api->book_appointment($payload);
         if (is_array($result) && !empty($result['appointment']['id'])) {
             wp_send_json(['ok' => true, 'appointment' => $result['appointment'], 'used_fallback' => false]);
@@ -330,7 +395,7 @@ class CRM_Profile_Booking_Shortcode {
                 .crm-calendar-nav{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}.crm-calendar-nav-btn{width:28px;height:28px;border:1px solid var(--border);border-radius:4px;background:#fff}
                 .crm-calendar-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px}.crm-day-head{font-size:12px;color:var(--muted-foreground);text-align:center;padding:6px 0}
                 .crm-cell{height:34px;border:none;border-radius:4px;background:#fff;cursor:pointer}.crm-cell.muted{color:#ccc;cursor:default}.crm-cell.available{background:#f2fbf5;color:var(--primary)}.crm-cell.active{background:var(--primary);color:#fff}
-                .crm-time-slots-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:10px 0 14px}.crm-time-slot{border:1px solid var(--border);background:#fff;border-radius:6px;padding:10px;cursor:pointer}.crm-time-slot.selected{border-color:var(--primary);background:#f2fbf5;color:var(--primary)}.crm-time-slot.disabled{opacity:.45;cursor:not-allowed}
+                .crm-time-slots-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:10px 0 14px}.crm-time-slot{border:1px solid var(--border);background:#fff;border-radius:6px;padding:10px;cursor:pointer}.crm-time-slot.selected{border-color:var(--primary);background:#f2fbf5;color:var(--primary)}.crm-time-slot.disabled{opacity:.55;cursor:not-allowed}.crm-time-slot.booked{background:#fef2f2;border-color:#ef4444;color:#b91c1c;text-decoration:line-through}
                 .crm-booking-summary{background:var(--muted);padding:12px;border-radius:6px;margin-bottom:12px}.crm-row{display:flex;justify-content:space-between;font-size:13px;margin:0 0 6px}.crm-row:last-child{margin:0;padding-top:6px;border-top:1px solid var(--border)}
                 .crm-btn-primary{width:100%;background:var(--primary);color:#fff;border:none;border-radius:10px;padding:10px;cursor:pointer}.crm-api-status{font-size:12px;text-align:center;color:var(--muted-foreground);margin-top:8px;min-height:16px}
                 .crm-booking-modal{position:fixed;inset:0;background:rgba(0,0,0,.45);display:none;align-items:center;justify-content:center;padding:16px;z-index:99999}
@@ -341,6 +406,7 @@ class CRM_Profile_Booking_Shortcode {
                 .crm-booking-modal-card input,.crm-booking-modal-card select,.crm-booking-modal-card textarea{width:100%;border:1px solid var(--border);border-radius:8px;padding:10px}
                 .crm-modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:12px}
                 .crm-btn-secondary{background:#fff;border:1px solid var(--border);border-radius:10px;padding:10px 14px;cursor:pointer}
+                .crm-modal-message{font-size:13px; margin-top:10px; min-height:18px}
                 @media (max-width: 960px){.crm-profile-container{padding:20px}.crm-profile-intro{flex-direction:column}.crm-profile-content-grid{grid-template-columns:1fr}}
             </style>
             <div class="crm-profile-container">
@@ -398,6 +464,7 @@ class CRM_Profile_Booking_Shortcode {
                     <div style="margin-top:10px">
                         <textarea id="crm-client-notes" rows="3" placeholder="Notes (optional)"></textarea>
                     </div>
+                    <div class="crm-modal-message" id="crm-modal-message"></div>
                     <div class="crm-modal-actions">
                         <button type="button" class="crm-btn-secondary" id="crm-close-modal">Cancel</button>
                         <button type="button" class="crm-btn-primary" style="width:auto" id="crm-submit-booking">Confirm Appointment</button>
@@ -417,6 +484,7 @@ class CRM_Profile_Booking_Shortcode {
                 const submitBookingBtn=document.getElementById('crm-submit-booking'), nameInput=document.getElementById('crm-client-name');
                 const emailInput=document.getElementById('crm-client-email'), notesInput=document.getElementById('crm-client-notes');
                 const sessionTypeInput=document.getElementById('crm-client-session-type');
+                const modalMessage=document.getElementById('crm-modal-message');
                 const days=['Su','Mo','Tu','We','Th','Fr','Sa'];
                 let view=new Date(), selectedDate='', selectedTime='';
                 const iso=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
@@ -432,15 +500,15 @@ class CRM_Profile_Booking_Shortcode {
                     const total=first+daysIn, tail=(7-(total%7))%7; for(let i=1;i<=tail;i++){const c=document.createElement('div');c.className='crm-cell muted';c.textContent=String(i);cal.appendChild(c);}
                 }
                 function renderSlots(list){slotsGrid.innerHTML='';if(!Array.isArray(list)||!list.length){slotsGrid.innerHTML='<div style="grid-column:span 2;color:#6b7280;font-size:13px">No slots available.</div>';status.textContent='No slots available for selected date.';return;}
-                    list.forEach(s=>{const t=typeof s==='string'?s:(s.time||''),avail=typeof s==='string'?true:!!s.available,b=document.createElement('button');b.type='button';b.className='crm-time-slot';b.textContent=t;if(!avail)b.classList.add('disabled');
+                    list.forEach(s=>{const t=typeof s==='string'?s:(s.time||''),avail=(typeof s==='string')?true:(s.available===true||s.available===1||s.available==='1'),b=document.createElement('button');b.type='button';b.className='crm-time-slot';b.textContent=t;if(!avail){b.classList.add('disabled','booked');b.disabled=true;}
                         b.onclick=()=>{if(!avail)return;document.querySelectorAll('.crm-time-slot').forEach(x=>x.classList.remove('selected'));b.classList.add('selected');selectedTime=t;sumTime.textContent=t;};slotsGrid.appendChild(b);});
                     status.textContent='Showing live slots from API.';}
                 function loadSlots(){if(!selectedDate||!therapistId)return; slotsGrid.innerHTML='<div style="grid-column:span 2;color:#6b7280;font-size:13px">Loading slots...</div>'; status.textContent='Loading slots...'; const body=new URLSearchParams(); body.append('action','crm_profile_slots'); body.append('therapist_id',therapistId); body.append('date',selectedDate); body.append('session_type',sessionType); body.append('nonce',bookingNonce); fetch(ajaxUrl,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded; charset=UTF-8'},body:body.toString()}).then(r=>r.json()).then(res=>{if(res&&Array.isArray(res.slots)){renderSlots(res.slots); if(res.message)status.textContent=res.message;} else {renderSlots([]); if(res&&res.message)status.textContent=res.message;}}).catch(()=>{renderSlots([]); status.textContent='Could not load slots from API.';});}
-                function openBookingModal(){if(!selectedDate||!selectedTime){alert('Please select a date and time first.');return;}sessionTypeInput.value=sessionType;modal.classList.add('open');}
+                function openBookingModal(){if(!selectedDate||!selectedTime){status.textContent='Please select a date and time first.';status.style.color='#dc2626';return;}sessionTypeInput.value=sessionType;if(modalMessage){modalMessage.textContent='';modalMessage.style.color='#6b7280';}modal.classList.add('open');}
                 function closeBookingModal(){modal.classList.remove('open');}
                 function submitBooking(){
                     const fullName=(nameInput.value||'').trim(), email=(emailInput.value||'').trim(), notes=(notesInput.value||'').trim();
-                    if(!fullName||!email){alert('Please enter your name and email.');return;}
+                    if(!fullName||!email){if(modalMessage){modalMessage.style.color='#dc2626';modalMessage.textContent='Please enter your name and email.';}return;}
                     submitBookingBtn.disabled=true;submitBookingBtn.textContent='Confirming...';
                     const body=new URLSearchParams();
                     body.append('action','crm_profile_continue_booking');
@@ -454,8 +522,8 @@ class CRM_Profile_Booking_Shortcode {
                     body.append('booking_data[sessionType]',sessionTypeInput.value||sessionType);
                     body.append('booking_data[duration]','50');
                     body.append('nonce',bookingNonce);
-                    fetch(ajaxUrl,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded; charset=UTF-8'},body:body.toString()}).then(r=>r.json()).then(res=>{if(res&&res.ok&&res.appointment&&res.appointment.id){alert('Success! Appointment ID: '+res.appointment.id);status.textContent='Live booking completed via API.';closeBookingModal();}else{alert((res&&res.message)?res.message:'Booking failed.');status.textContent=(res&&res.message)?res.message:'Booking failed.';}})
-                    .catch(()=>{alert('Booking API unavailable.');status.textContent='Booking API unavailable.';}).finally(()=>{submitBookingBtn.disabled=false;submitBookingBtn.textContent='Confirm Appointment';});
+                    fetch(ajaxUrl,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded; charset=UTF-8'},body:body.toString()}).then(r=>r.json()).then(res=>{if(res&&res.ok&&res.appointment&&res.appointment.id){if(modalMessage){modalMessage.style.color='#16a34a';modalMessage.textContent='Appointment confirmed successfully. ID: '+res.appointment.id;}status.style.color='#16a34a';status.textContent='Live booking completed via API.';setTimeout(()=>{closeBookingModal();},900);}else{const msg=(res&&res.message)?res.message:'Booking failed.';if(modalMessage){modalMessage.style.color='#dc2626';modalMessage.textContent=msg;}status.style.color='#dc2626';status.textContent=msg;}})
+                    .catch(()=>{if(modalMessage){modalMessage.style.color='#dc2626';modalMessage.textContent='Booking API unavailable.';}status.style.color='#dc2626';status.textContent='Booking API unavailable.';}).finally(()=>{submitBookingBtn.disabled=false;submitBookingBtn.textContent='Confirm Appointment';});
                 }
                 prev.onclick=()=>{view=new Date(view.getFullYear(),view.getMonth()-1,1);drawCalendar();}; next.onclick=()=>{view=new Date(view.getFullYear(),view.getMonth()+1,1);drawCalendar();}; cont.onclick=openBookingModal;
                 closeModalBtn.onclick=closeBookingModal; submitBookingBtn.onclick=submitBooking; modal.onclick=(e)=>{if(e.target===modal)closeBookingModal();};
