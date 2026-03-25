@@ -215,7 +215,7 @@ class CRM_API_Handler {
         $this->clear_last_error();
         if (empty($this->base_url)) {
             $this->set_last_error('CRM API URL is not configured.');
-            return [];
+            return []; 
         }
         if (empty($id) || empty($date)) return [];
         $id = sanitize_text_field((string) $id);
