@@ -330,7 +330,7 @@ class CRM_Booking_Flow_Shortcodes {
                     .crm-day{width:36px;height:36px}
                     .crm-slot-grid{grid-template-columns:1fr 1fr}
                     .crm-foot{flex-direction:column;align-items:stretch}
-                    .crm-btn{width:100%;text-align:center}
+                    .crm-btn{width:100%;text-align:center; align-items:center}
                 }
                 @media (max-width:640px){
                     .crm-flow-wrap{padding:0 12px}

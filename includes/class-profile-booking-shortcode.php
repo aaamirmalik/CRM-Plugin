@@ -385,7 +385,7 @@ class CRM_Profile_Booking_Shortcode {
                 .crm-profile-image{width:200px;height:200px;overflow:hidden;border-radius:var(--radius-md)}.crm-profile-image img{width:100%;height:100%;object-fit:cover}
                 .crm-profile-info h1{margin:0 0 4px;font-size:32px}.crm-profile-role{font-size:14px;color:var(--primary);font-weight:700;margin-bottom:18px;text-transform:uppercase;letter-spacing:.05em}
                 .crm-profile-meta-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px}.crm-profile-meta-item{display:flex;gap:10px}.crm-profile-meta-item h5{margin:0;font-size:12px}.crm-profile-meta-item p{margin:0;font-size:13px;color:var(--muted-foreground)}
-                .crm-btn{display:inline-flex;gap:6px;border:1px solid var(--border);border-radius:999px;padding:8px 14px;text-decoration:none;color:var(--foreground)}
+                .crm-btn{display:inline-flex;gap:6px;border:1px solid var(--border);border-radius:999px;padding:8px 14px;text-decoration:none;color:var(--foreground);align-items:center}
                 .crm-profile-content-grid{display:grid;grid-template-columns:1fr 380px;gap:30px}
                 .crm-profile-details h2{font-size:24px;border-bottom:1px solid var(--border);padding-bottom:8px;margin:0 0 12px}.crm-profile-details section{margin-bottom:24px}.crm-profile-details p{color:#35544d}
                 .crm-profile-details .crm-bio-rtl{direction:rtl;text-align:right}
