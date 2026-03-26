@@ -1,7 +1,7 @@
 <?php
 /**
  * Plugin Name: CRM Connector Pro
- * Description: Premium CRM Integration Dashboard with Dynamic Form Saving.
+ * Description: Premium CRM Integration Dashboard for therapist and appointment booking workflows.
  * Version: 10.0
  * Author: Abiha Khan
  */
@@ -15,7 +15,6 @@ require_once CRM_BOOKING_PATH . 'includes/class-api-handler.php';
 require_once CRM_BOOKING_PATH . 'includes/admin-setting.php';
 require_once CRM_BOOKING_PATH . 'includes/class-profile-booking-shortcode.php';
 require_once CRM_BOOKING_PATH . 'includes/class-booking-flow-shortcodes.php';
-require_once CRM_BOOKING_PATH . 'includes/class-form-renderer.php';
 
 if (!function_exists('crm_booking_get_client_ip')) {
     function crm_booking_get_client_ip() {
@@ -147,10 +146,7 @@ register_activation_hook(__FILE__, 'crm_booking_plugin_activate');
 register_deactivation_hook(__FILE__, 'crm_booking_plugin_deactivate');
 
 class CRM_Connector_Core {
-    private $form_renderer;
-
     public function __construct() {
-        $this->form_renderer = new CRM_Form_Renderer();
         add_action('init', [$this, 'register_therapist_cpt']);
         add_action('init', [$this, 'maybe_sync_therapists_cache']);
         add_action('admin_post_crm_sync_therapists_cache', [$this, 'handle_manual_therapist_sync']);
@@ -160,9 +156,6 @@ class CRM_Connector_Core {
         add_action('wp_enqueue_scripts', [$this, 'enqueue_frontend_assets']);
         add_action('add_meta_boxes', [$this, 'register_therapist_profile_metabox']);
         
-        // AJAX Handlers for Forms
-        add_action('wp_ajax_save_crm_form_action', [$this, 'save_form_via_ajax']);
-        add_action('wp_ajax_delete_crm_form_action', [$this, 'delete_form_via_ajax']);
         add_action('wp_ajax_crm_mark_notifications_read', [$this, 'ajax_mark_notifications_read']);
         add_action('wp_ajax_save_crm_settings_action', [$this, 'save_crm_settings_via_ajax']);
 
@@ -181,7 +174,6 @@ class CRM_Connector_Core {
         // Register Shortcode [crm_form] - Updated for Premium UI
         add_shortcode('crm_form', [$this, 'render_crm_shortcode']);
         add_shortcode('crm_booking', [$this, 'render_crm_shortcode']); // Backward compatibility
-        add_shortcode('crm_dynamic_form', [$this->form_renderer, 'render_full_form']);
     }
 
     public function create_menu() {
@@ -573,78 +565,6 @@ class CRM_Connector_Core {
             ? sanitize_text_field((string) $result['message'])
             : ($booking_error !== '' ? $booking_error : 'Booking rejected by CRM.');
         wp_send_json(['ok' => false, 'message' => $message], 502);
-    }
-
-    public function save_form_via_ajax() {
-        if (!$this->verify_admin_ajax_request()) return;
-        $form_id = isset($_POST['form_id']) ? sanitize_text_field($_POST['form_id']) : '';
-        $name = isset($_POST['name']) ? sanitize_text_field($_POST['name']) : '';
-        $fields = isset($_POST['fields']) ? wp_unslash($_POST['fields']) : '[]';
-        $decoded_fields = json_decode($fields, true);
-        if (!is_array($decoded_fields)) {
-            wp_send_json_error(['message' => 'Invalid form payload.'], 400);
-        }
-        $normalized_fields = [];
-        foreach ($decoded_fields as $field) {
-            if (!is_array($field)) continue;
-            $type = isset($field['type']) ? sanitize_key($field['type']) : 'text';
-            $width = isset($field['width']) ? sanitize_key($field['width']) : 'half';
-            if (!in_array($type, ['text', 'select', 'textarea'], true)) $type = 'text';
-            if (!in_array($width, ['half', 'full'], true)) $width = 'half';
-            $label = isset($field['label']) ? sanitize_text_field($field['label']) : '';
-            $generated_id = sanitize_title($label);
-            if ($generated_id === '' || is_numeric($generated_id)) {
-                $generated_id = 'field_' . (count($normalized_fields) + 1);
-            }
-
-            $normalized_fields[] = [
-                'id' => $generated_id,
-                'label' => $label,
-                'type' => $type,
-                'width' => $width,
-                'placeholder' => isset($field['placeholder']) ? sanitize_text_field($field['placeholder']) : '',
-                'required' => !empty($field['required']),
-            ];
-        }
-        $fields = wp_json_encode($normalized_fields);
-        $all_forms = get_option('crm_registered_forms_list', []);
-        $exists = false;
-
-        foreach($all_forms as &$f) {
-            if(!empty($form_id) && isset($f['id']) && $f['id'] === $form_id) {
-                $f['name']   = $name;
-                $f['fields'] = $fields;
-                $exists = true;
-                break;
-            }
-        }
-        if(!$exists) {
-            $all_forms[] = [
-                'id'        => 'crm_' . uniqid(),
-                'name'      => $name,
-                'shortcode' => '[crm_form]',
-                'entries'   => '0',
-                'status'    => 'Active',
-                'fields'    => $fields
-            ];
-        }
-        update_option('crm_registered_forms_list', $all_forms);
-        update_option('crm_form_fields', wp_json_encode($normalized_fields), false);
-        if ($name !== '') {
-            update_option('crm_form_title', $name, false);
-        }
-        wp_send_json_success();
-    }
-
-    public function delete_form_via_ajax() {
-        if (!$this->verify_admin_ajax_request()) return;
-        $form_id = isset($_POST['form_id']) ? sanitize_text_field($_POST['form_id']) : '';
-        $all_forms = get_option('crm_registered_forms_list', []);
-        $updated_forms = array_filter($all_forms, function($form) use ($form_id) {
-            return (isset($form['id']) && $form['id'] !== $form_id);
-        });
-        update_option('crm_registered_forms_list', array_values($updated_forms));
-        wp_send_json_success();
     }
 
     public function ajax_mark_notifications_read() {

@@ -29,9 +29,7 @@ function crm_dashboard_page() {
         $therapists = []; 
     }
 
-    // 3. Fetch existing forms
-    $all_forms = get_option('crm_registered_forms_list', []);
-    $saved_fields = get_option('crm_form_fields', '[]');
+    // 3. Fetch appointment logs
     $booking_logs = get_option('crm_sync_logs', []);
     if (!is_array($booking_logs)) $booking_logs = [];
     $recent_booking_logs = array_slice($booking_logs, 0, 8);
@@ -61,16 +59,6 @@ function crm_dashboard_page() {
     $last_sync = (int) get_option('crm_therapist_last_sync', 0);
     $last_sync_label = $last_sync > 0 ? wp_date('Y-m-d H:i:s', $last_sync) : 'Never';
     
-    if(empty($all_forms)) {
-        $all_forms[] = [
-            'id' => 'crm_default',
-            'name' => 'Consultation Form', 
-            'shortcode' => '[crm_form]', 
-            'entries' => '10', 
-            'status' => 'Active',
-            'fields' => '[]'
-        ];
-    }
     ?>
     <style>
         /* TAB SYSTEM CSS */
@@ -96,11 +84,6 @@ function crm_dashboard_page() {
         .crm-modal-body { padding: 30px; overflow-y: auto; flex: 1; display: flex; gap: 30px; }
         .crm-modal-footer { padding: 20px 30px; border-top: 1px solid #e2e8f0; display: flex; justify-content: flex-end; gap: 10px; background: #f8fafc; }
 
-        .builder-left { flex: 1; }
-        .builder-right { flex: 0 0 350px; background: #f8fafc; padding: 20px; border-radius: 12px; border: 1px solid #e2e8f0; }
-        .builder-table { width: 100%; border-collapse: collapse; }
-        .builder-table th { text-align: left; font-size: 11px; text-transform: uppercase; color: #64748b; padding: 10px; border-bottom: 2px solid #f1f5f9; }
-        .builder-table td { padding: 10px; border-bottom: 1px solid #f1f5f9; }
         .f-input { width: 100%; border: 1px solid #cbd5e1; border-radius: 6px; padding: 8px; font-size: 13px; margin-bottom: 10px; }
         
         /* Dashboard Stats */
@@ -144,15 +127,125 @@ function crm_dashboard_page() {
         .crm-popover-item small { color: #64748b; display: block; margin-top: 2px; }
         .crm-top-actions { display: flex; gap: 8px; padding: 10px 14px; border-top: 1px solid #f1f5f9; background: #f8fafc; }
         .crm-top-actions button { border: 1px solid #dbe3ef; background: #fff; color: #1e293b; border-radius: 6px; padding: 6px 10px; cursor: pointer; font-size: 12px; }
+
+        @media (max-width: 992px) {
+            .form-row-2 { grid-template-columns: 1fr; gap: 12px; }
+            .crm-booking-form-wrap { padding: 18px; max-width: 100%; }
+            .crm-nav-left h1 { font-size: 18px; }
+            .crm-nav-left p { font-size: 12px; }
+        }
+
+        @media (max-width: 768px) {
+            .crm-top-popover {
+                width: min(94vw, 340px);
+                right: 0;
+                left: auto;
+            }
+            .crm-top-actions {
+                flex-direction: column;
+            }
+            .crm-top-actions button {
+                width: 100%;
+            }
+
+            #tab-therapists .card-header > div:last-child,
+            #tab-availability .crm-section-card > div[style*="display:flex"],
+            #tab-direct-booking form > div[style*="display:flex"] {
+                display: grid !important;
+                grid-template-columns: 1fr !important;
+                gap: 10px !important;
+                align-items: stretch !important;
+            }
+
+            .table-search { width: 100%; }
+            .duration-box { flex-wrap: wrap; }
+            .dur-btn { min-width: 58px; text-align: center; }
+
+            /* Dashboard cards */
+            #tab-dashboard .crm-stat-grid { grid-template-columns: 1fr; gap: 12px; }
+            #tab-dashboard .stat-card { padding: 14px; }
+            #tab-dashboard .status-indicator { gap: 8px; align-items: flex-start; flex-wrap: wrap; }
+            #tab-dashboard .status-indicator > div { min-width: 0; }
+            #tab-dashboard #crm-status-label { display: block; font-size: 16px; line-height: 1.2; word-break: break-word; }
+            #tab-dashboard #crm-sync-status { font-size: 18px !important; line-height: 1.2; word-break: break-word; }
+
+            /* Therapist table -> mobile cards */
+            #tab-therapists .crm-table,
+            #tab-appointment-logs .crm-table {
+                display: block;
+                overflow: visible;
+            }
+            #tab-therapists .crm-table thead,
+            #tab-appointment-logs .crm-table thead {
+                display: none;
+            }
+            #tab-therapists .crm-table tbody,
+            #tab-appointment-logs .crm-table tbody {
+                display: block;
+            }
+            #tab-therapists .crm-table tr,
+            #tab-appointment-logs .crm-table tr {
+                display: block;
+                border: 1px solid #e2e8f0;
+                border-radius: 10px;
+                margin-bottom: 10px;
+                background: #fff;
+                overflow: hidden;
+            }
+            #tab-therapists .crm-table td,
+            #tab-appointment-logs .crm-table td {
+                display: flex;
+                justify-content: space-between;
+                gap: 12px;
+                align-items: flex-start;
+                padding: 10px 12px;
+                border-bottom: 1px solid #f1f5f9;
+                white-space: normal;
+                word-break: break-word;
+            }
+            #tab-therapists .crm-table td:last-child,
+            #tab-appointment-logs .crm-table td:last-child {
+                border-bottom: 0;
+            }
+            #tab-therapists .crm-table td::before,
+            #tab-appointment-logs .crm-table td::before {
+                font-size: 12px;
+                font-weight: 700;
+                color: #64748b;
+                text-transform: uppercase;
+                letter-spacing: .03em;
+                flex: 0 0 96px;
+            }
+            #tab-therapists .crm-table td:nth-child(1)::before { content: "Therapist"; }
+            #tab-therapists .crm-table td:nth-child(2)::before { content: "Email"; }
+            #tab-therapists .crm-table td:nth-child(3)::before { content: "Experience"; }
+            #tab-therapists .crm-table td:nth-child(4)::before { content: "Actions"; }
+            #tab-appointment-logs .crm-table td:nth-child(1)::before { content: "ID"; }
+            #tab-appointment-logs .crm-table td:nth-child(2)::before { content: "Client"; }
+            #tab-appointment-logs .crm-table td:nth-child(3)::before { content: "Date"; }
+            #tab-appointment-logs .crm-table td:nth-child(4)::before { content: "Type"; }
+            #tab-appointment-logs .crm-table td:nth-child(5)::before { content: "Status"; }
+
+            #tab-therapists .crm-table td[colspan],
+            #tab-appointment-logs .crm-table td[colspan] {
+                display: block;
+                text-align: center;
+                border-bottom: 0;
+            }
+            #tab-therapists .crm-table td[colspan]::before,
+            #tab-appointment-logs .crm-table td[colspan]::before {
+                content: none;
+            }
+            #tab-therapists .view-profile-api {
+                width: 100%;
+            }
+        }
     </style>
 
     <div class="crm-app-shell">
         <header class="crm-top-nav">
             <div class="crm-nav-left"><h1>CRM Connector Pro</h1><p>Connect Your Website with Your CRM</p></div>
             <div class="crm-nav-right">
-                <button type="button" class="crm-top-icon-btn" id="crm-top-logs-btn" title="Open Appointment Logs">
-                    <iconify-icon icon="lucide:message-square"></iconify-icon>
-                </button>
                 <button type="button" class="crm-top-icon-btn" id="crm-top-bell-btn" title="Notifications">
                     <iconify-icon icon="lucide:bell"></iconify-icon>
                     <?php if ($unread_notifications_count > 0) : ?>
@@ -194,7 +287,6 @@ function crm_dashboard_page() {
                     <a class="nav-item" data-tab="therapists"><iconify-icon icon="lucide:users"></iconify-icon> Therapists</a>
                     <a class="nav-item" data-tab="availability"><iconify-icon icon="lucide:calendar-range"></iconify-icon> Availability</a>
                     <a class="nav-item" data-tab="direct-booking"><iconify-icon icon="lucide:calendar-plus"></iconify-icon> Direct Booking</a>
-                    <a class="nav-item" data-tab="forms"><iconify-icon icon="lucide:file-text"></iconify-icon> Forms</a>
                     <a class="nav-item" data-tab="appointment-logs"><iconify-icon icon="lucide:history"></iconify-icon> Appointment Logs</a>
                     <a class="nav-item" data-tab="crm-settings"><iconify-icon icon="lucide:settings-2"></iconify-icon> CRM Settings</a>
                 </nav>
@@ -408,32 +500,6 @@ function crm_dashboard_page() {
                     </div>
                 </section>
 
-                <section id="tab-forms" class="crm-tab-content">
-                    <div class="crm-section-card">
-                        <div class="card-header">
-                            <div><h3>Appointment Forms</h3><p>Manage your scheduling forms.</p></div>
-                            <button class="btn-primary" id="open-builder-btn">Create New Form</button>
-                        </div>
-                        <table class="crm-table">
-                            <thead><tr><th>Form Name</th><th>Shortcode</th><th>Entries</th><th>Status</th><th>Actions</th></tr></thead>
-                            <tbody id="crm-forms-list-body">
-                                <?php foreach($all_forms as $form): ?>
-                                <tr>
-                                    <td><strong><?php echo esc_html($form['name']); ?></strong></td>
-                                    <td><code><?php echo esc_html($form['shortcode']); ?></code></td>
-                                    <td><?php echo esc_html($form['entries']); ?> Entries</td>
-                                    <td><span class="badge active"><?php echo esc_html($form['status']); ?></span></td>
-                                    <td>
-                                        <a href="#" class="edit-form-trigger" data-id="<?php echo esc_attr($form['id']); ?>" data-name="<?php echo esc_attr($form['name']); ?>" data-fields="<?php echo esc_attr($form['fields']); ?>">Edit</a> | 
-                                        <a href="#" class="delete-form-trigger" style="color:#ef4444;" data-id="<?php echo esc_attr($form['id']); ?>">Delete</a>
-                                    </td>
-                                </tr>
-                                <?php endforeach; ?>
-                            </tbody>
-                        </table>
-                    </div>
-                </section>
-
                 <section id="tab-crm-settings" class="crm-tab-content">
                     <div class="crm-section-card" style="max-width: 600px;">
                         <h3>CRM Settings</h3>
@@ -482,39 +548,6 @@ function crm_dashboard_page() {
         </div>
     </div>
 
-    <div class="crm-modal-overlay" id="builder-modal">
-        <div class="crm-modal">
-            <form id="crm-settings-form-logic">
-                <input type="hidden" id="form-edit-id" value="">
-                <div class="crm-modal-header"><h3>Form Builder Pro</h3><button type="button" id="close-modal-btn" style="background:none; border:none; font-size:24px; cursor:pointer;">&times;</button></div>
-                <div class="crm-modal-body">
-                    <div class="builder-left">
-                        <div style="display:grid; grid-template-columns:1fr 1fr; gap:20px; margin-bottom:20px;">
-                            <div><label>Form Title</label><input type="text" id="input-title" class="f-input" required></div>
-                            <div><label>Brand Color</label><input type="color" id="input-color" value="#1B6D12" style="height:40px; width:100%;"></div>
-                        </div>
-                        <table class="builder-table">
-                            <thead><tr><th>Label</th><th>Type</th><th>Width</th><th></th></tr></thead>
-                            <tbody id="crm-fields-body"></tbody>
-                        </table>
-                        <button type="button" id="add-field-btn" class="btn-blue-outline" style="width:100%; margin-top:15px; border:1px dashed #3b82f6;">+ Add Field</button>
-                    </div>
-                    <div class="builder-right">
-                        <div class="mock-form">
-                            <h4 id="prev-title">Preview</h4>
-                            <div id="prev-fields-area"></div>
-                            <button type="button" id="prev-btn" style="width:100%; color:white; border:none; padding:10px;">Submit</button>
-                        </div>
-                    </div>
-                </div>
-                <div class="crm-modal-footer">
-                    <button type="button" class="btn-blue-outline close-modal-btn">Cancel</button>
-                    <button type="submit" class="btn-primary" id="save-ajax-btn">Save Configuration</button>
-                </div>
-            </form>
-        </div>
-    </div>
-
     <script>
         document.addEventListener('DOMContentLoaded', function() {
             const ajaxurl = '<?php echo admin_url('admin-ajax.php'); ?>';
@@ -550,10 +583,9 @@ function crm_dashboard_page() {
                 });
             });
 
-            // Top Bar Shortcuts (Notifications / Settings / Logs)
+            // Top Bar Shortcuts (Notifications / Settings)
             const topBellBtn = document.getElementById('crm-top-bell-btn');
             const topSettingsBtn = document.getElementById('crm-top-settings-btn');
-            const topLogsBtn = document.getElementById('crm-top-logs-btn');
             const popOpenLogsBtn = document.getElementById('crm-popover-open-logs');
             const popOpenSettingsBtn = document.getElementById('crm-popover-open-settings');
             const notificationBadge = document.getElementById('crm-notification-badge');
@@ -582,12 +614,6 @@ function crm_dashboard_page() {
             if (topSettingsBtn) {
                 topSettingsBtn.addEventListener('click', function() {
                     activateTab('crm-settings');
-                    if (notificationPopover) notificationPopover.classList.remove('open');
-                });
-            }
-            if (topLogsBtn) {
-                topLogsBtn.addEventListener('click', function() {
-                    activateTab('appointment-logs');
                     if (notificationPopover) notificationPopover.classList.remove('open');
                 });
             }
@@ -882,92 +908,6 @@ function crm_dashboard_page() {
                 });
             };
 
-            // 8. MODAL BUILDER LOGIC
-            const modal = document.getElementById('builder-modal');
-            const fieldBody = document.getElementById('crm-fields-body');
-            const openBtn = document.getElementById('open-builder-btn');
-
-            if(openBtn) openBtn.onclick = () => {
-                document.getElementById('crm-settings-form-logic').reset();
-                document.getElementById('form-edit-id').value = '';
-                fieldBody.innerHTML = '';
-                modal.classList.add('open');
-            };
-            document.getElementById('close-modal-btn').onclick = () => modal.classList.remove('open');
-
-            function createRow(d = { label: '', type: 'text', width: 'half' }) {
-                const tr = document.createElement('tr');
-                const safeLabel = escapeHtml(d.label || '');
-                tr.innerHTML = `
-                    <td><input type="text" class="f-label f-input" value="${safeLabel}"></td>
-                    <td><select class="f-type f-input">
-                        <option value="text" ${d.type=='text'?'selected':''}>Text</option>
-                        <option value="select" ${d.type=='select'?'selected':''}>Select</option>
-                    </select></td>
-                    <td><select class="f-width f-input">
-                        <option value="half" ${d.width=='half'?'selected':''}>50%</option>
-                        <option value="full" ${d.width=='full'?'selected':''}>100%</option>
-                    </select></td>
-                    <td><button type="button" class="remove-field" style="color:red; border:none; background:none; cursor:pointer;">&times;</button></td>
-                `;
-                fieldBody.appendChild(tr);
-                updatePreview();
-            }
-
-            function updatePreview() {
-                document.getElementById('prev-title').innerText = document.getElementById('input-title').value || "Preview";
-                document.getElementById('prev-btn').style.backgroundColor = document.getElementById('input-color').value;
-                const area = document.getElementById('prev-fields-area');
-                area.innerHTML = '';
-                Array.from(fieldBody.querySelectorAll('tr')).forEach(tr => {
-                    const label = tr.querySelector('.f-label').value;
-                    const div = document.createElement('div');
-                    div.style.width = tr.querySelector('.f-width').value === 'half' ? '48%' : '100%';
-                    div.style.display = 'inline-block';
-                    div.innerHTML = `<label style="font-size:10px; font-weight:700; color:#94a3b8; display:block;">${escapeHtml(label || 'Field')}</label><div style="width:100%; height:30px; background:#f1f5f9; border-radius:4px; margin-bottom:10px;"></div>`;
-                    area.appendChild(div);
-                });
-            }
-
-            document.getElementById('add-field-btn').onclick = () => createRow();
-            document.getElementById('crm-settings-form-logic').addEventListener('input', updatePreview);
-            fieldBody.onclick = (e) => { if(e.target.classList.contains('remove-field')) { e.target.closest('tr').remove(); updatePreview(); } };
-            
-            document.querySelectorAll('.edit-form-trigger').forEach(btn => {
-                btn.onclick = function(e) {
-                    e.preventDefault();
-                    document.getElementById('form-edit-id').value = this.dataset.id;
-                    document.getElementById('input-title').value = this.dataset.name;
-                    fieldBody.innerHTML = '';
-                    try {
-                        const parsed = JSON.parse(this.dataset.fields || '[]');
-                        if (Array.isArray(parsed)) parsed.forEach(f => createRow(f));
-                    } catch (err) {
-                        console.error('Invalid form config payload', err);
-                    }
-                    modal.classList.add('open');
-                };
-            });
-
-            document.querySelectorAll('.delete-form-trigger').forEach(btn => {
-                btn.onclick = function(e) {
-                    e.preventDefault();
-                    if(!confirm('Delete this form?')) return;
-                    jQuery.post(ajaxurl, { action: 'delete_crm_form_action', nonce: crmAdminNonce, form_id: this.dataset.id }, () => location.reload());
-                };
-            });
-
-            document.getElementById('crm-settings-form-logic').onsubmit = function(e) {
-                e.preventDefault();
-                const fields = Array.from(fieldBody.querySelectorAll('tr')).map(tr => ({
-                    label: tr.querySelector('.f-label').value,
-                    type: tr.querySelector('.f-type').value,
-                    width: tr.querySelector('.f-width').value
-                }));
-                const data = { action: 'save_crm_form_action', form_id: document.getElementById('form-edit-id').value, name: document.getElementById('input-title').value, fields: JSON.stringify(fields) };
-                data.nonce = crmAdminNonce;
-                jQuery.post(ajaxurl, data, () => location.reload());
-            };
         });
     </script>
     <?php
