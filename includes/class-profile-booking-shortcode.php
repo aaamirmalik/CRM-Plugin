@@ -434,7 +434,7 @@ class CRM_Profile_Booking_Shortcode {
             <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
             <script src="https://code.iconify.design/iconify-icon/3.0.0/iconify-icon.min.js"></script>
             <style>
-                .crm-profile-export-wrapper{--background:#fbfef9;--foreground:#123029;--border:#00000014;--primary:#1b6d12;--secondary:#eaf7ea;--muted:#f4f6f5;--muted-foreground:#6b7280;--radius-sm:4px;--radius-md:6px;--radius-lg:8px;--radius-xl:12px;font-family:Inter,system-ui,sans-serif;background:var(--background);color:var(--foreground)}
+                .crm-profile-export-wrapper{--background:#fbfef9;--foreground:#123029;--border:#00000014;--primary:#3e5640;--secondary:#eaf7ea;--muted:#f4f6f5;--muted-foreground:#6b7280;--radius-sm:4px;--radius-md:6px;--radius-lg:8px;--radius-xl:12px;font-family:Inter,system-ui,sans-serif;background:var(--background);color:var(--foreground)}
                 .crm-profile-export-wrapper *{box-sizing:border-box}.crm-profile-container{max-width:1200px;margin:0 auto;padding:40px}
                 .crm-breadcrumbs{display:flex;gap:8px;font-size:13px;color:var(--muted-foreground);margin-bottom:24px; align-items:center}
                 .crm-profile-intro{display:flex;gap:30px;background:#fff;padding:30px;border:1px solid var(--border);border-radius:var(--radius-lg);margin-bottom:30px}

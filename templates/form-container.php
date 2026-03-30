@@ -39,10 +39,10 @@
     input, select, textarea { padding: 12px; border: 1px solid #E5E7EB; border-radius: 6px; font-size: 15px; }
     .session-toggle { display: flex; gap: 10px; margin-top: 5px; }
     .toggle-btn { flex: 1; padding: 10px; border: 1px solid #E5E7EB; background: #fff; cursor: pointer; border-radius: 6px; display: flex; align-items: center; justify-content: center; gap: 8px; }
-    .toggle-btn.active { background: #1B6D12; color: white; border-color: #1B6D12; }
-    .room-selection { background: #f0fdf4; padding: 15px; border-radius: 8px; border: 1px dashed #1B6D12; display: none; flex-direction: column; }
+    .toggle-btn.active { background: #3e5640; color: white; border-color: #3e5640; }
+    .room-selection { background: #f0fdf4; padding: 15px; border-radius: 8px; border: 1px dashed #3e5640; display: none; flex-direction: column; }
     .footer { padding: 20px 30px; background: #f8faf9; border-top: 1px solid #E5E7EB; display: flex; justify-content: flex-end; }
-    .btn-submit { background: #1B6D12; color: white; padding: 12px 30px; border: none; border-radius: 6px; font-weight: 600; cursor: pointer; }
+    .btn-submit { background: #3e5640; color: white; padding: 12px 30px; border: none; border-radius: 6px; font-weight: 600; cursor: pointer; }
     @media (max-width: 600px) { .form-grid { grid-template-columns: 1fr; } .full-width { grid-column: span 1; } }
     /* Loading Spinner */
 .btn-submit:disabled {

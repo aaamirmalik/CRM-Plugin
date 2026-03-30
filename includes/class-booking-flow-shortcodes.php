@@ -291,7 +291,7 @@ class CRM_Booking_Flow_Shortcodes {
         ob_start(); ?>
         <div class="crm-flow-booking">
             <style>
-                .crm-flow-booking{--bd:#00000014;--pr:#1b6d12;--sf:#eaf7ea;background:#f2fbf5;padding:50px 0;font-family:Inter,system-ui,sans-serif;color:#123029}
+                .crm-flow-booking{--bd:#00000014;--pr:#3e5640;--sf:#eaf7ea;background:#f2fbf5;padding:50px 0;font-family:Inter,system-ui,sans-serif;color:#123029}
                 .crm-flow-wrap{max-width:1200px;margin:0 auto;padding:0 24px}.crm-flow-grid{display:grid;grid-template-columns:320px 1fr;gap:30px}
                 .crm-card{background:#fff;border:1px solid var(--bd);border-radius:10px}.crm-sidebar{padding:20px}.crm-sidebar h3{margin:0 0 14px}
                 .crm-service-list{display:flex;flex-direction:column;gap:8px}.crm-service-item{display:flex;align-items:center;padding:12px;border-radius:8px;border:1px solid transparent;cursor:pointer;background:#fff}
@@ -302,7 +302,7 @@ class CRM_Booking_Flow_Shortcodes {
                 .crm-cal-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}.crm-cal-nav button{width:30px;height:30px;border:1px solid var(--bd);background:#fff;border-radius:50%;cursor:pointer}
                 .crm-cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;text-align:center}.crm-day-head{font-size:12px;color:#6b7280;padding:6px 0}
                 .crm-day{width:40px;height:40px;margin:0 auto;border-radius:50%;border:1px solid transparent;background:#fff;cursor:pointer}
-                .crm-day.active{background:var(--pr);color:#fff}.crm-day.disabled{opacity:.4;cursor:not-allowed}.crm-day.available{background:#f2fbf5;border-color:#b7dfb2;color:#1b6d12}
+                .crm-day.active{background:var(--pr);color:#fff}.crm-day.disabled{opacity:.4;cursor:not-allowed}.crm-day.available{background:#f2fbf5;border-color:#b7dfb2;color:#3e5640}
                 .crm-day.available.active{background:var(--pr);border-color:var(--pr);color:#fff}
                 .crm-slots h4{margin:0 0 4px}.crm-slot-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}.crm-slot{padding:12px;border:1px solid var(--bd);border-radius:8px;background:#fff;cursor:pointer}.crm-slot.active{background:var(--pr);border-color:var(--pr);color:#fff}.crm-slot.disabled{opacity:.55;cursor:not-allowed}.crm-slot.booked{background:#fef2f2;border-color:#ef4444;color:#b91c1c;text-decoration:line-through}.crm-slot.recently-booked{box-shadow:0 0 0 2px #ef4444 inset}
                 .crm-foot{margin-top:24px;padding-top:16px;border-top:1px solid var(--bd);display:flex;justify-content:space-between;align-items:center;gap:16px}.crm-btn{background:var(--pr);color:#fff;border:none;border-radius:999px;padding:12px 22px;cursor:pointer}.crm-status{font-size:12px;color:#6b7280}
