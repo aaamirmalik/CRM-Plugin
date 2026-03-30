@@ -833,6 +833,8 @@ class CRM_Connector_Core {
 
             $avatar = isset($t['avatarUrl']) ? esc_url_raw((string) $t['avatarUrl']) : '';
             if ($avatar === '' && isset($profile_raw['avatarUrl'])) $avatar = esc_url_raw((string) $profile_raw['avatarUrl']);
+            if ($avatar === '' && isset($profile_raw['profilePicture'])) $avatar = esc_url_raw((string) $profile_raw['profilePicture']);
+            if ($avatar === '' && isset($profile['profilePicture'])) $avatar = esc_url_raw((string) $profile['profilePicture']);
 
             $phone = isset($t['phone']) ? sanitize_text_field((string) $t['phone']) : '';
             if ($phone === '' && isset($profile_raw['phone'])) $phone = sanitize_text_field((string) $profile_raw['phone']);
@@ -840,10 +842,29 @@ class CRM_Connector_Core {
             $bio_html = isset($profile['bioHtml']) ? wp_kses_post((string) $profile['bioHtml']) : '';
             $arabic_bio = isset($profile['arabicBioHtml']) ? wp_kses_post((string) $profile['arabicBioHtml']) : '';
             $turkish_bio = isset($profile['turkishBioHtml']) ? wp_kses_post((string) $profile['turkishBioHtml']) : '';
+            if (($bio_html === '' || $arabic_bio === '') && !empty($profile_raw['bio']) && is_string($profile_raw['bio'])) {
+                $raw_bio = trim((string) $profile_raw['bio']);
+                $english = '';
+                $arabic = '';
+                if (preg_match('/Biography\s*\(English\)\s*:\s*(.*?)(?:Biography\s*\(Arabic\)\s*:|$)/isu', $raw_bio, $m)) {
+                    $english = trim((string) $m[1]);
+                }
+                if (preg_match('/Biography\s*\(Arabic\)\s*:\s*(.*)$/isu', $raw_bio, $m)) {
+                    $arabic = trim((string) $m[1]);
+                }
+                if ($english === '' && $arabic === '') {
+                    $english = $raw_bio;
+                }
+                if ($bio_html === '' && $english !== '') $bio_html = wpautop(esc_html($english));
+                if ($arabic_bio === '' && $arabic !== '') $arabic_bio = wpautop(esc_html($arabic));
+            }
 
             $languages = isset($profile['languages']) && is_array($profile['languages']) ? array_values(array_filter(array_map('sanitize_text_field', $profile['languages']))) : [];
             $specializations = isset($profile['specializations']) && is_array($profile['specializations']) ? array_values(array_filter(array_map('sanitize_text_field', $profile['specializations']))) : [];
             $approaches = isset($profile['treatmentApproaches']) && is_array($profile['treatmentApproaches']) ? array_values(array_filter(array_map('sanitize_text_field', $profile['treatmentApproaches']))) : [];
+            if (empty($approaches) && isset($profile['approaches']) && is_array($profile['approaches'])) {
+                $approaches = array_values(array_filter(array_map('sanitize_text_field', $profile['approaches'])));
+            }
             $education = isset($profile['education']) && is_array($profile['education']) ? $profile['education'] : [];
             $summary_lines = [];
             if ($email) $summary_lines[] = 'Email: ' . $email;

@@ -14,12 +14,57 @@ class CRM_Profile_Booking_Shortcode {
         return [];
     }
 
+    private function normalize_education_items($education) {
+        if (!is_array($education)) return [];
+        $out = [];
+        foreach ($education as $row) {
+            if (is_array($row)) {
+                $out[] = $row;
+                continue;
+            }
+            if (!is_string($row)) continue;
+            $line = trim($row);
+            if ($line === '') continue;
+
+            $item = ['institution' => $line, 'degree' => '', 'duration' => ''];
+            if (preg_match('/^\s*(.*?)\s+[—-]\s+(.*?)(?:\s+\(([^)]*)\))?\s*$/u', $line, $m)) {
+                $item['university'] = trim((string) $m[1]);
+                $item['degree'] = trim((string) $m[2]);
+                $item['duration'] = !empty($m[3]) ? trim((string) $m[3]) : '';
+            }
+            $out[] = $item;
+        }
+        return $out;
+    }
+
+    private function extract_bio_sections($raw_bio) {
+        $text = is_string($raw_bio) ? trim($raw_bio) : '';
+        if ($text === '') return ['bioHtml' => '', 'arabicBioHtml' => ''];
+
+        $english = '';
+        $arabic = '';
+        if (preg_match('/Biography\s*\(English\)\s*:\s*(.*?)(?:Biography\s*\(Arabic\)\s*:|$)/isu', $text, $m)) {
+            $english = trim((string) $m[1]);
+        }
+        if (preg_match('/Biography\s*\(Arabic\)\s*:\s*(.*)$/isu', $text, $m)) {
+            $arabic = trim((string) $m[1]);
+        }
+        if ($english === '' && $arabic === '') {
+            $english = $text;
+        }
+
+        return [
+            'bioHtml' => $english !== '' ? wpautop(esc_html($english)) : '',
+            'arabicBioHtml' => $arabic !== '' ? wpautop(esc_html($arabic)) : '',
+        ];
+    }
+
     private function normalize_profile($raw, $basic = [], $local_fallback = []) {
         $fb = array_merge($this->fallback_profile(), is_array($local_fallback) ? $local_fallback : []);
         $node = (is_array($raw) && isset($raw['profile']) && is_array($raw['profile'])) ? $raw['profile'] : (is_array($raw) ? $raw : []);
         $languages = (!empty($node['languages']) && is_array($node['languages'])) ? $node['languages'] : (isset($fb['languages']) ? $fb['languages'] : []);
         $specializations = (!empty($node['specializations']) && is_array($node['specializations'])) ? $node['specializations'] : (isset($fb['specializations']) ? $fb['specializations'] : []);
-        $approaches = (!empty($node['treatmentApproaches']) && is_array($node['treatmentApproaches'])) ? $node['treatmentApproaches'] : (isset($fb['approaches']) ? $fb['approaches'] : []);
+        $approaches = (!empty($node['treatmentApproaches']) && is_array($node['treatmentApproaches'])) ? $node['treatmentApproaches'] : ((!empty($node['approaches']) && is_array($node['approaches'])) ? $node['approaches'] : (isset($fb['approaches']) ? $fb['approaches'] : []));
         $age_groups = (!empty($node['ageGroups']) && is_array($node['ageGroups'])) ? $node['ageGroups'] : [];
         $education = (!empty($node['education']) && is_array($node['education'])) ? $node['education'] : (isset($fb['education']) ? $fb['education'] : []);
         if (!is_array($languages)) $languages = [];
@@ -27,6 +72,7 @@ class CRM_Profile_Booking_Shortcode {
         if (!is_array($approaches)) $approaches = [];
         if (!is_array($age_groups)) $age_groups = [];
         if (!is_array($education)) $education = [];
+        $education = $this->normalize_education_items($education);
 
         $years = '';
         if (isset($node['yearsOfExperience']) && $node['yearsOfExperience'] !== '') {
@@ -51,20 +97,30 @@ class CRM_Profile_Booking_Shortcode {
         }
         if ($role === 'therapist') $role = 'Psychotherapist';
 
+        $bio_html = !empty($node['bioHtml']) ? (string) $node['bioHtml'] : (!empty($fb['bioHtml']) ? (string) $fb['bioHtml'] : '');
+        $arabic_bio_html = !empty($node['arabicBioHtml']) ? (string) $node['arabicBioHtml'] : (!empty($fb['arabicBioHtml']) ? (string) $fb['arabicBioHtml'] : '');
+        if (($bio_html === '' || $arabic_bio_html === '') && !empty($raw['bio']) && is_string($raw['bio'])) {
+            $parsed = $this->extract_bio_sections($raw['bio']);
+            if ($bio_html === '') $bio_html = $parsed['bioHtml'];
+            if ($arabic_bio_html === '') $arabic_bio_html = $parsed['arabicBioHtml'];
+        }
+
+        $image_url = !empty($raw['profilePicture']) ? $raw['profilePicture'] : (!empty($raw['avatarUrl']) ? $raw['avatarUrl'] : (!empty($raw['image']) ? $raw['image'] : (!empty($node['profilePicture']) ? $node['profilePicture'] : (!empty($fb['imageUrl']) ? $fb['imageUrl'] : 'https://storage.googleapis.com/banani-avatars/avatar%2Fmale%2F35-50%2FMiddle%2520Eastern%2F4'))));
+
         return [
-            'fullName' => !empty($raw['fullName']) ? $raw['fullName'] : (!empty($basic['fullName']) ? $basic['fullName'] : $fb['fullName']),
-            'email' => !empty($raw['email']) ? $raw['email'] : (!empty($basic['email']) ? $basic['email'] : $fb['email']),
+            'fullName' => !empty($raw['fullName']) ? $raw['fullName'] : (!empty($basic['fullName']) ? $basic['fullName'] : (isset($fb['fullName']) ? $fb['fullName'] : '')),
+            'email' => !empty($raw['email']) ? $raw['email'] : (!empty($basic['email']) ? $basic['email'] : (isset($fb['email']) ? $fb['email'] : '')),
             'yearsOfExperience' => $years,
-            'licenseType' => !empty($node['licenseType']) ? $node['licenseType'] : $fb['licenseType'],
+            'licenseType' => !empty($node['licenseType']) ? $node['licenseType'] : (!empty($raw['licenseType']) ? $raw['licenseType'] : (isset($fb['licenseType']) ? $fb['licenseType'] : '')),
             'languages' => $languages,
             'specializations' => $specializations,
             'approaches' => $approaches,
             'role' => $role,
             'clientFocus' => !empty($age_groups) ? implode(', ', $age_groups) : (!empty($fb['clientFocus']) ? $fb['clientFocus'] : 'Adults & Children'),
-            'imageUrl' => !empty($raw['avatarUrl']) ? $raw['avatarUrl'] : (!empty($raw['image']) ? $raw['image'] : (!empty($fb['imageUrl']) ? $fb['imageUrl'] : 'https://storage.googleapis.com/banani-avatars/avatar%2Fmale%2F35-50%2FMiddle%2520Eastern%2F4')),
+            'imageUrl' => $image_url,
             'phone' => !empty($raw['phone']) ? $raw['phone'] : (!empty($fb['phone']) ? $fb['phone'] : '+15488660366'),
-            'bioHtml' => !empty($fb['bioHtml']) ? $fb['bioHtml'] : '',
-            'arabicBioHtml' => !empty($fb['arabicBioHtml']) ? $fb['arabicBioHtml'] : '',
+            'bioHtml' => $bio_html,
+            'arabicBioHtml' => $arabic_bio_html,
             'turkishBioHtml' => !empty($fb['turkishBioHtml']) ? $fb['turkishBioHtml'] : '',
             'education' => $education,
         ];
