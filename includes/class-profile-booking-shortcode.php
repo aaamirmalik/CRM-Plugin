@@ -37,29 +37,56 @@ class CRM_Profile_Booking_Shortcode {
         return $out;
     }
 
-    private function extract_bio_sections($raw_bio) {
-        $text = is_string($raw_bio) ? trim($raw_bio) : '';
-        if ($text === '') return ['bioHtml' => '', 'arabicBioHtml' => ''];
+private function extract_bio_sections($text) {
+        $text = is_string($text) ? trim($text) : '';
+        if ($text === '') return ['bioHtml' => '', 'arabicBioHtml' => '', 'turkishBioHtml' => ''];
 
-        $english = '';
+        $english = $text;
         $arabic = '';
-        if (preg_match('/Biography\s*\(English\)\s*:\s*(.*?)(?:Biography\s*\(Arabic\)\s*:|$)/isu', $text, $m)) {
-            $english = trim((string) $m[1]);
+        $turkish = '';
+
+        // Clean up leading English header if it exists
+        $english = preg_replace('/^(?:<p>)?\s*Biography\s*\(English\)\s*:\s*(?:<\/p>|<br\s*\/?>)?/isu', '', $english);
+
+        // Extract Arabic/Urdu
+        $arabic_pattern = '/(?:<p>\s*)?(السيرة الذاتية|Biography\s*\(Arabic\)\s*:)(?:\s*<\/p>|<br\s*\/?>|\s+)(.*)/isu';
+        if (preg_match($arabic_pattern, $english, $m, PREG_OFFSET_CAPTURE)) {
+            $arabic = trim($m[2][0]);
+            // Slice the English string to stop right before the Arabic header
+            $english = trim(substr($english, 0, $m[0][1])); 
         }
-        if (preg_match('/Biography\s*\(Arabic\)\s*:\s*(.*)$/isu', $text, $m)) {
-            $arabic = trim((string) $m[1]);
+
+        // Extract Turkish
+        $turkish_pattern = '/(?:<p>\s*)?(Türk Biyografisi)(?:\s*<\/p>|<br\s*\/?>|\s+)(.*)/isu';
+        if (preg_match($turkish_pattern, $english, $m, PREG_OFFSET_CAPTURE)) {
+            $turkish = trim($m[2][0]);
+            // Slice the English string to stop right before the Turkish header
+            $english = trim(substr($english, 0, $m[0][1]));
         }
-        if ($english === '' && $arabic === '') {
-            $english = $text;
+        
+        // Safety check: In case Turkish was placed after Arabic and got caught in the Arabic slice
+        if (preg_match($turkish_pattern, $arabic, $m, PREG_OFFSET_CAPTURE)) {
+            $turkish = trim($m[2][0]);
+            $arabic = trim(substr($arabic, 0, $m[0][1]));
         }
 
         return [
-            'bioHtml' => $english !== '' ? wpautop(esc_html($english)) : '',
-            'arabicBioHtml' => $arabic !== '' ? wpautop(esc_html($arabic)) : '',
+            'bioHtml' => $this->format_bio_html($english),
+            'arabicBioHtml' => $this->format_bio_html($arabic),
+            'turkishBioHtml' => $this->format_bio_html($turkish),
         ];
     }
 
-    private function normalize_profile($raw, $basic = [], $local_fallback = []) {
+    private function format_bio_html($text) {
+        if ($text === '') return '';
+        // If it already contains HTML tags (like from ACF), leave it alone so we don't double-wrap it
+        if (strpos($text, '<p>') !== false || strpos($text, '<br') !== false) {
+            return $text;
+        }
+        return wpautop(esc_html($text));
+    }
+
+  private function normalize_profile($raw, $basic = [], $local_fallback = []) {
         $fb = array_merge($this->fallback_profile(), is_array($local_fallback) ? $local_fallback : []);
         $node = (is_array($raw) && isset($raw['profile']) && is_array($raw['profile'])) ? $raw['profile'] : (is_array($raw) ? $raw : []);
         $languages = (!empty($node['languages']) && is_array($node['languages'])) ? $node['languages'] : (isset($fb['languages']) ? $fb['languages'] : []);
@@ -85,25 +112,36 @@ class CRM_Profile_Booking_Shortcode {
             $years = (string) $fb['yearsOfExperience'];
         }
 
-        $role = '';
+        $role = 'Psychotherapist'; // Default
         if (!empty($raw['title'])) {
-            $role = (string) $raw['title'];
+            $role = (string) $raw['title']; // This captures "Psychotherapist, Art Therapist" from your JSON
+        } elseif (!empty($node['title'])) {
+            $role = (string) $node['title'];
         } elseif (!empty($fb['role'])) {
             $role = (string) $fb['role'];
-        } elseif (!empty($raw['role'])) {
-            $role = (string) $raw['role'];
-        } else {
-            $role = 'Psychotherapist';
-        }
-        if ($role === 'therapist') $role = 'Psychotherapist';
+}
 
-        $bio_html = !empty($node['bioHtml']) ? (string) $node['bioHtml'] : (!empty($fb['bioHtml']) ? (string) $fb['bioHtml'] : '');
-        $arabic_bio_html = !empty($node['arabicBioHtml']) ? (string) $node['arabicBioHtml'] : (!empty($fb['arabicBioHtml']) ? (string) $fb['arabicBioHtml'] : '');
-        if (($bio_html === '' || $arabic_bio_html === '') && !empty($raw['bio']) && is_string($raw['bio'])) {
-            $parsed = $this->extract_bio_sections($raw['bio']);
-            if ($bio_html === '') $bio_html = $parsed['bioHtml'];
-            if ($arabic_bio_html === '') $arabic_bio_html = $parsed['arabicBioHtml'];
+        // --- NEW SMART BIO PARSING LOGIC START ---
+        
+        // 1. Get the raw text to parse (Prioritize API, fallback to ACF)
+        $raw_bio_text = !empty($raw['bio']) ? (string)$raw['bio'] : (!empty($fb['bioHtml']) ? (string)$fb['bioHtml'] : '');
+        
+        // 2. Run our smart parser
+        $parsed = $this->extract_bio_sections($raw_bio_text);
+        
+        $bio_html = $parsed['bioHtml'];
+        $arabic_bio_html = $parsed['arabicBioHtml'];
+        $turkish_bio_html = $parsed['turkishBioHtml'];
+
+        // 3. If the combined text didn't have translations, but the individual ACF fields do, use those
+        if ($arabic_bio_html === '' && !empty($fb['arabicBioHtml'])) {
+            $arabic_bio_html = (string) $fb['arabicBioHtml'];
         }
+        if ($turkish_bio_html === '' && !empty($fb['turkishBioHtml'])) {
+            $turkish_bio_html = (string) $fb['turkishBioHtml'];
+        }
+        
+        // --- NEW SMART BIO PARSING LOGIC END ---
 
         $image_url = !empty($raw['profilePicture']) ? $raw['profilePicture'] : (!empty($raw['avatarUrl']) ? $raw['avatarUrl'] : (!empty($raw['image']) ? $raw['image'] : (!empty($node['profilePicture']) ? $node['profilePicture'] : (!empty($fb['imageUrl']) ? $fb['imageUrl'] : 'https://storage.googleapis.com/banani-avatars/avatar%2Fmale%2F35-50%2FMiddle%2520Eastern%2F4'))));
 
@@ -121,7 +159,7 @@ class CRM_Profile_Booking_Shortcode {
             'phone' => !empty($raw['phone']) ? $raw['phone'] : (!empty($fb['phone']) ? $fb['phone'] : '+15488660366'),
             'bioHtml' => $bio_html,
             'arabicBioHtml' => $arabic_bio_html,
-            'turkishBioHtml' => !empty($fb['turkishBioHtml']) ? $fb['turkishBioHtml'] : '',
+            'turkishBioHtml' => $turkish_bio_html, // FIXED: Now uses the extracted variable instead of just $fb
             'education' => $education,
         ];
     }
@@ -439,7 +477,8 @@ class CRM_Profile_Booking_Shortcode {
                 .crm-breadcrumbs{display:flex;gap:8px;font-size:13px;color:var(--muted-foreground);margin-bottom:24px; align-items:center}
                 .crm-profile-intro{display:flex;gap:30px;background:#fff;padding:30px;border:1px solid var(--border);border-radius:var(--radius-lg);margin-bottom:30px}
                 .crm-profile-image{width:200px;height:200px;overflow:hidden;border-radius:var(--radius-md)}.crm-profile-image img{width:100%;height:100%;object-fit:cover}
-                .crm-profile-info h1{margin:0 0 4px;font-size:32px}.crm-profile-role{font-size:14px;color:var(--primary);font-weight:700;margin-bottom:18px;text-transform:uppercase;letter-spacing:.05em}
+                .crm-profile-info{ width:calc(100% - 230px)}
+                .crm-profile-info h1{margin:0 0 4px;font-size:32px !important;}.crm-profile-role{font-size:14px;color:var(--primary);font-weight:700;margin-bottom:18px;text-transform:uppercase;letter-spacing:.05em}
                 .crm-profile-meta-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px}.crm-profile-meta-item{display:flex;gap:10px}.crm-profile-meta-item h5{margin:0;font-size:12px}.crm-profile-meta-item p{margin:0;font-size:13px;color:var(--muted-foreground)}
                 .crm-btn{display:inline-flex;gap:6px;border:1px solid var(--border);border-radius:999px;padding:8px 14px;text-decoration:none;color:var(--foreground);align-items:center}
                 .crm-profile-content-grid{display:grid;grid-template-columns:1fr 380px;gap:30px}
@@ -463,7 +502,7 @@ class CRM_Profile_Booking_Shortcode {
                 .crm-modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:12px}
                 .crm-btn-secondary{background:#fff;border:1px solid var(--border);border-radius:10px;padding:10px 14px;cursor:pointer}
                 .crm-modal-message{font-size:13px; margin-top:10px; min-height:18px}
-                @media (max-width: 960px){.crm-profile-container{padding:20px}.crm-profile-intro{flex-direction:column}.crm-profile-content-grid{grid-template-columns:1fr}}
+                @media (max-width: 960px){.crm-profile-container{padding:20px}.crm-profile-intro{flex-direction:column}.crm-profile-content-grid{grid-template-columns:1fr} .crm-profile-info{width:100%}}
             </style>
             <div class="crm-profile-container">
                 <div class="crm-breadcrumbs"><a href="<?php echo esc_url(home_url('/')); ?>">Home</a><iconify-icon icon="lucide:chevron-right"></iconify-icon><a href="<?php echo esc_url($archive_url); ?>">Our Therapists</a><iconify-icon icon="lucide:chevron-right"></iconify-icon><span><?php echo esc_html($p['fullName']); ?></span></div>
@@ -483,8 +522,8 @@ class CRM_Profile_Booking_Shortcode {
                 <div class="crm-profile-content-grid">
                     <div class="crm-profile-details">
                         <section><h2>About <?php echo esc_html($about_name); ?></h2><?php if (!empty($p['bioHtml'])) { echo wp_kses_post($p['bioHtml']); } else { ?><p>Profile data is currently unavailable from the CRM API.</p><?php } ?></section>
-                        <?php if (!empty($p['arabicBioHtml'])) : ?><section><h2>Arabic Biography</h2><div class="crm-bio-rtl"><?php echo wp_kses_post($p['arabicBioHtml']); ?></div></section><?php endif; ?>
-                        <?php if (!empty($p['turkishBioHtml'])) : ?><section><h2>Turkish Biography</h2><?php echo wp_kses_post($p['turkishBioHtml']); ?></section><?php endif; ?>
+                        <?php if (!empty($p['arabicBioHtml'])) : ?><section><h2 class="crm-bio-rtl">السيرة الذاتية</h2><div class="crm-bio-rtl"><?php echo wp_kses_post($p['arabicBioHtml']); ?></div></section><?php endif; ?>
+                        <?php if (!empty($p['turkishBioHtml'])) : ?><section><h2>Türk Biyografisi</h2><?php echo wp_kses_post($p['turkishBioHtml']); ?></section><?php endif; ?>
                         <?php if (!empty($p['education']) && is_array($p['education'])) : ?>
                         <section><h2>Education</h2><div class="crm-edu-list"><?php foreach ($p['education'] as $edu): $uni = isset($edu['university']) ? $edu['university'] : (isset($edu['institution']) ? $edu['institution'] : ''); $degree = isset($edu['degree']) ? $edu['degree'] : ''; $dur = isset($edu['duration']) ? $edu['duration'] : ''; if ($uni === '' && $degree === '' && $dur === '') continue; ?><div class="crm-edu-item"><?php if ($uni !== ''): ?><strong><?php echo esc_html($uni); ?></strong><?php endif; ?><?php if ($degree !== ''): ?><div><?php echo esc_html($degree); ?></div><?php endif; ?><?php if ($dur !== ''): ?><small><?php echo esc_html($dur); ?></small><?php endif; ?></div><?php endforeach; ?></div></section>
                         <?php endif; ?>
