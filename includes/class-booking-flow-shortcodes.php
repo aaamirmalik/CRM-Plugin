@@ -291,7 +291,7 @@ class CRM_Booking_Flow_Shortcodes {
         ob_start(); ?>
         <div class="crm-flow-booking">
             <style>
-                .crm-flow-booking{--bd:#00000014;--pr:#3e5640;--sf:#eaf7ea;background:#f2fbf5;padding:50px 0;font-family:Inter,system-ui,sans-serif;color:#123029}
+                .crm-flow-booking{--bd:#00000014;--pr:#3e5640;--sf:#eaf7ea;background: linear-gradient(67.68deg, rgba(248, 235, 221, 0.6) 15%, #F2F7F2 100%);padding:50px 0;font-family:Inter,system-ui,sans-serif;color:#123029}
                 .crm-flow-wrap{max-width:1200px;margin:0 auto;padding:0 24px}.crm-flow-grid{display:grid;grid-template-columns:320px 1fr;gap:30px}
                 .crm-card{background:#fff;border:1px solid var(--bd);border-radius:10px}.crm-sidebar{padding:20px}.crm-sidebar h3{margin:0 0 14px}
                 .crm-service-list{display:flex;flex-direction:column;gap:8px}.crm-service-item{display:flex;align-items:center;padding:12px;border-radius:8px;border:1px solid transparent;cursor:pointer;background:#fff}
