@@ -469,7 +469,7 @@ private function extract_bio_sections($text) {
         <div class="crm-profile-export-wrapper">
             <link rel="preconnect" href="https://fonts.googleapis.com" />
             <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-            <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
+            <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Tajawal:wght@400;500;700&display=swap" rel="stylesheet" />
             <script src="https://code.iconify.design/iconify-icon/3.0.0/iconify-icon.min.js"></script>
             <style>
                 .crm-profile-export-wrapper{--background:#fbfef9;--foreground:#123029;--border:#00000014;--primary:#3e5640;--secondary:#eaf7ea;--muted:#f4f6f5;--muted-foreground:#6b7280;--radius-sm:4px;--radius-md:6px;--radius-lg:8px;--radius-xl:12px;font-family:Inter,system-ui,sans-serif;background: linear-gradient(67.68deg, rgba(248, 235, 221, 0.6) 15.06%, #F2F7F2 100%);color:var(--foreground)}
@@ -483,7 +483,7 @@ private function extract_bio_sections($text) {
                 .crm-btn{display:inline-flex;gap:6px;border:1px solid var(--border);border-radius:999px;padding:8px 14px;text-decoration:none;color:var(--foreground);align-items:center}
                 .crm-profile-content-grid{display:grid;grid-template-columns:1fr 380px;gap:30px}
                 .crm-profile-details h2{font-size:24px;border-bottom:1px solid var(--border);padding-bottom:8px;margin:0 0 12px}.crm-profile-details section{margin-bottom:24px}.crm-profile-details p{color:#35544d}
-                .crm-profile-details .crm-bio-rtl{direction:rtl;text-align:right}
+                .crm-profile-details .crm-bio-rtl{font-family: 'Tajawal', sans-serif !important; direction:rtl;text-align:right}
                 .crm-tags{display:flex;flex-wrap:wrap;gap:8px}.crm-badge{background:var(--secondary);padding:4px 10px;border-radius:999px;font-size:13px}
                 .crm-edu-list{display:grid;grid-template-columns:1fr;gap:10px}.crm-edu-item{border:1px solid var(--border);border-radius:8px;padding:10px;background:#fff}.crm-edu-item strong{display:block}
                 .crm-booking-widget{background:#fff;border:1px solid var(--border);border-radius:var(--radius-lg);padding:20px;position:sticky;top:24px}
