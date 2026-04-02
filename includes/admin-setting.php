@@ -224,7 +224,9 @@ function crm_dashboard_page() {
             #tab-appointment-logs .crm-table td:nth-child(2)::before { content: "Client"; }
             #tab-appointment-logs .crm-table td:nth-child(3)::before { content: "Date"; }
             #tab-appointment-logs .crm-table td:nth-child(4)::before { content: "Type"; }
-            #tab-appointment-logs .crm-table td:nth-child(5)::before { content: "Status"; }
+            #tab-appointment-logs .crm-table td:nth-child(5)::before { content: "Appointment Date"; }
+            #tab-appointment-logs .crm-table td:nth-child(6)::before { content: "Therapist"; }
+            #tab-appointment-logs .crm-table td:nth-child(7)::before { content: "Status"; }
 
             #tab-therapists .crm-table td[colspan],
             #tab-appointment-logs .crm-table td[colspan] {
@@ -474,7 +476,7 @@ function crm_dashboard_page() {
                     <div class="crm-section-card">
                         <h3>Appointment Sync Logs</h3>
                         <table class="crm-table">
-                            <thead><tr><th>ID</th><th>Client</th><th>Date</th><th>Type</th><th>Status</th></tr></thead>
+                            <thead><tr><th>ID</th><th>Client</th><th>Date</th><th>Type</th><th>Appointment Date</th><th>Therapist</th><th>Status</th></tr></thead>
                             <tbody id="logs-table-body">
                                 <?php if (!empty($booking_logs)) : ?>
                                     <?php foreach ($booking_logs as $log) : ?>
@@ -483,17 +485,21 @@ function crm_dashboard_page() {
                                         $log_name = isset($log['fullName']) ? sanitize_text_field((string) $log['fullName']) : 'Unknown Client';
                                         $log_date = isset($log['date']) ? sanitize_text_field((string) $log['date']) : '-';
                                         $log_type = isset($log['type']) ? sanitize_text_field((string) $log['type']) : 'online';
+                                        $log_appointment_date = isset($log['sessionDate']) ? sanitize_text_field((string) $log['sessionDate']) : '-';
+                                        $log_therapist_name = isset($log['therapistName']) ? sanitize_text_field((string) $log['therapistName']) : '-';
                                         ?>
                                         <tr>
                                             <td>#<?php echo esc_html($log_id); ?></td>
                                             <td><?php echo esc_html($log_name); ?></td>
                                             <td><?php echo esc_html($log_date); ?></td>
                                             <td><?php echo esc_html(ucfirst($log_type)); ?></td>
+                                            <td><?php echo esc_html($log_appointment_date); ?></td>
+                                            <td><?php echo esc_html($log_therapist_name); ?></td>
                                             <td><span class="badge active">Scheduled</span></td>
                                         </tr>
                                     <?php endforeach; ?>
                                 <?php else : ?>
-                                    <tr><td colspan="5" style="text-align:center; padding:20px;">No appointment logs found yet.</td></tr>
+                                    <tr><td colspan="7" style="text-align:center; padding:20px;">No appointment logs found yet.</td></tr>
                                 <?php endif; ?>
                             </tbody>
                         </table>

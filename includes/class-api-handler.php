@@ -94,6 +94,39 @@ class CRM_API_Handler {
         return $payload;
     }
 
+    private function resolve_therapist_name_from_id($therapist_id) {
+        $therapist_id = sanitize_text_field((string) $therapist_id);
+        if ($therapist_id === '') return '';
+
+        // Prefer local cached therapist posts when available.
+        if (function_exists('crm_get_cached_therapists')) {
+            $cached = crm_get_cached_therapists();
+            if (is_array($cached)) {
+                foreach ($cached as $therapist) {
+                    if (!is_array($therapist)) continue;
+                    $id = isset($therapist['id']) ? sanitize_text_field((string) $therapist['id']) : '';
+                    if ($id !== '' && $id === $therapist_id) {
+                        return isset($therapist['fullName']) ? sanitize_text_field((string) $therapist['fullName']) : '';
+                    }
+                }
+            }
+        }
+
+        // Fallback to API list if cache is not available.
+        $therapists = $this->get_all_therapists();
+        if (is_array($therapists)) {
+            foreach ($therapists as $therapist) {
+                if (!is_array($therapist)) continue;
+                $id = isset($therapist['id']) ? sanitize_text_field((string) $therapist['id']) : '';
+                if ($id !== '' && $id === $therapist_id) {
+                    return isset($therapist['fullName']) ? sanitize_text_field((string) $therapist['fullName']) : '';
+                }
+            }
+        }
+
+        return '';
+    }
+
     /**
      * 1) List All Therapists
      * GET /all-therapist
@@ -318,13 +351,21 @@ class CRM_API_Handler {
         if (isset($result['appointment']) && isset($result['appointment']['id'])) {
             $logs = get_option('crm_sync_logs', []);
             if (!is_array($logs)) $logs = [];
+            $therapist_id = isset($payload['therapistId']) ? sanitize_text_field((string) $payload['therapistId']) : '';
+            $appointment_date = isset($payload['sessionDate']) ? sanitize_text_field((string) $payload['sessionDate']) : '';
+            $therapist_name = isset($payload['therapistName']) ? sanitize_text_field((string) $payload['therapistName']) : '';
+            if ($therapist_name === '') {
+                $therapist_name = $this->resolve_therapist_name_from_id($therapist_id);
+            }
             
             // Add new booking to the top of the log
             array_unshift($logs, [
                 'id' => $result['appointment']['id'],
                 'fullName' => isset($payload['fullName']) ? $payload['fullName'] : 'Unknown',
                 'date' => current_time('mysql'),
-                'type' => isset($payload['sessionType']) ? $payload['sessionType'] : 'online'
+                'type' => isset($payload['sessionType']) ? $payload['sessionType'] : 'online',
+                'sessionDate' => $appointment_date !== '' ? $appointment_date : '-',
+                'therapistName' => $therapist_name !== '' ? $therapist_name : '-',
             ]);
             
             // Keep only latest 100 logs to save database space
