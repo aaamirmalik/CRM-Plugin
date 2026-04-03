@@ -127,6 +127,37 @@ class CRM_API_Handler {
         return '';
     }
 
+    private function resolve_service_name_from_id($service_id) {
+        $service_id = sanitize_text_field((string) $service_id);
+        if ($service_id === '') return '';
+
+        if (function_exists('crm_get_cached_services')) {
+            $cached = crm_get_cached_services();
+            if (is_array($cached)) {
+                foreach ($cached as $service) {
+                    if (!is_array($service)) continue;
+                    $id = isset($service['id']) ? sanitize_text_field((string) $service['id']) : '';
+                    if ($id !== '' && $id === $service_id) {
+                        return isset($service['serviceName']) ? sanitize_text_field((string) $service['serviceName']) : '';
+                    }
+                }
+            }
+        }
+
+        $services = $this->get_all_services();
+        if (is_array($services)) {
+            foreach ($services as $service) {
+                if (!is_array($service)) continue;
+                $id = isset($service['id']) ? sanitize_text_field((string) $service['id']) : '';
+                if ($id !== '' && $id === $service_id) {
+                    return isset($service['serviceName']) ? sanitize_text_field((string) $service['serviceName']) : '';
+                }
+            }
+        }
+
+        return '';
+    }
+
     /**
      * 1) List All Therapists
      * GET /all-therapist
@@ -175,6 +206,104 @@ class CRM_API_Handler {
         $this->set_last_error('CRM therapists API returned HTTP ' . $code . '.');
         error_log('CRM API Response Code (all-therapist): ' . $code);
         return [];
+    }
+
+    /**
+     * List All Services
+     * GET /public/services
+     * Returns all published services.
+     */
+    public function get_all_services() {
+        $this->clear_last_error();
+        if (empty($this->base_url)) {
+            $this->set_last_error('CRM API URL is not configured.');
+            return [];
+        }
+        $cached = $this->cache_read('all_services');
+        if (is_array($cached)) return $cached;
+
+        $url = $this->base_url . '/public/services';
+
+        $response = wp_remote_get($url, [
+            'timeout'     => 30,
+            'sslverify'   => true,
+            'headers'     => [
+                'User-Agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/121.0.0.0',
+                'Accept'     => 'application/json',
+            ],
+        ]);
+
+        if (is_wp_error($response)) {
+            $err = 'CRM services API request failed: ' . $response->get_error_message();
+            $this->set_last_error($err);
+            error_log('CRM API Error (public/services): ' . $response->get_error_message());
+            return [];
+        }
+
+        $code = wp_remote_retrieve_response_code($response);
+        $body = wp_remote_retrieve_body($response);
+
+        if ($code === 200) {
+            $data = json_decode($body, true);
+            if (is_array($data)) {
+                $this->cache_write('all_services', [], $data, 5 * MINUTE_IN_SECONDS);
+                return $data;
+            }
+            $this->set_last_error('CRM services API returned invalid JSON.');
+            return [];
+        }
+
+        $this->set_last_error('CRM services API returned HTTP ' . $code . '.');
+        error_log('CRM API Response Code (public/services): ' . $code);
+        return [];
+    }
+
+    /**
+     * Get Service Details
+     * GET /public/services/:serviceId
+     */
+    public function get_service($id) {
+        $this->clear_last_error();
+        if (empty($this->base_url)) {
+            $this->set_last_error('CRM API URL is not configured.');
+            return null;
+        }
+        $id = sanitize_text_field((string) $id);
+        if ($id === '') return null;
+
+        $cached = $this->cache_read('service_detail', [$id]);
+        if (is_array($cached)) return $cached;
+
+        $url = $this->base_url . '/public/services/' . rawurlencode($id);
+
+        $response = wp_remote_get($url, [
+            'timeout'   => 20,
+            'sslverify' => true,
+            'headers'   => [
+                'User-Agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/121.0.0.0',
+                'Accept'     => 'application/json'
+            ]
+        ]);
+
+        if (is_wp_error($response)) {
+            $this->set_last_error('CRM service API request failed: ' . $response->get_error_message());
+            return null;
+        }
+
+        $code = wp_remote_retrieve_response_code($response);
+        if ($code !== 200) {
+            $this->set_last_error('CRM service API returned HTTP ' . $code . '.');
+            return null;
+        }
+
+        $body = wp_remote_retrieve_body($response);
+        $data = json_decode($body, true);
+        if (!is_array($data)) {
+            $this->set_last_error('CRM service API returned invalid JSON.');
+            return null;
+        }
+        $this->cache_write('service_detail', [$id], $data, 10 * MINUTE_IN_SECONDS);
+        return $data;
     }
 
     /**
@@ -352,10 +481,15 @@ class CRM_API_Handler {
             $logs = get_option('crm_sync_logs', []);
             if (!is_array($logs)) $logs = [];
             $therapist_id = isset($payload['therapistId']) ? sanitize_text_field((string) $payload['therapistId']) : '';
+            $service_id = isset($payload['serviceId']) ? sanitize_text_field((string) $payload['serviceId']) : '';
             $appointment_date = isset($payload['sessionDate']) ? sanitize_text_field((string) $payload['sessionDate']) : '';
             $therapist_name = isset($payload['therapistName']) ? sanitize_text_field((string) $payload['therapistName']) : '';
             if ($therapist_name === '') {
                 $therapist_name = $this->resolve_therapist_name_from_id($therapist_id);
+            }
+            $service_name = isset($payload['serviceName']) ? sanitize_text_field((string) $payload['serviceName']) : '';
+            if ($service_name === '') {
+                $service_name = $this->resolve_service_name_from_id($service_id);
             }
             
             // Add new booking to the top of the log
@@ -366,6 +500,8 @@ class CRM_API_Handler {
                 'type' => isset($payload['sessionType']) ? $payload['sessionType'] : 'online',
                 'sessionDate' => $appointment_date !== '' ? $appointment_date : '-',
                 'therapistName' => $therapist_name !== '' ? $therapist_name : '-',
+                'serviceId' => $service_id !== '' ? $service_id : '-',
+                'serviceName' => $service_name !== '' ? $service_name : '-',
             ]);
             
             // Keep only latest 100 logs to save database space

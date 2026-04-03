@@ -12,13 +12,16 @@ function crm_dashboard_page() {
 
     $api = new CRM_API_Handler();
     $therapists = $api->get_all_therapists();
-    $api_error = $api->get_last_error();
+    $therapists_api_error = $api->get_last_error();
+    $services = $api->get_all_services();
+    $services_api_error = $api->get_last_error();
+    $api_error = $therapists_api_error;
     
     // NEW: Fetch Dynamic Appointment Count
     $total_appointments = $api->get_appointment_count();
 
     // 2. Determine connection status and therapist count
-    if (is_array($therapists) && !empty($therapists) && $api_error === '') {
+    if (is_array($therapists) && !empty($therapists) && $therapists_api_error === '') {
         $total_therapists = count($therapists);
         $connection_status = 'active';
         $status_label = 'Connected';
@@ -27,6 +30,12 @@ function crm_dashboard_page() {
         $connection_status = 'inactive';
         $status_label = 'Disconnected';
         $therapists = []; 
+    }
+    if (is_array($services) && $services_api_error === '') {
+        $total_services = count($services);
+    } else {
+        $total_services = 0;
+        $services = function_exists('crm_get_cached_services') ? crm_get_cached_services() : [];
     }
 
     // 3. Fetch appointment logs
@@ -58,6 +67,9 @@ function crm_dashboard_page() {
     $sync_url = wp_nonce_url(admin_url('admin-post.php?action=crm_sync_therapists_cache'), 'crm_sync_therapists_cache');
     $last_sync = (int) get_option('crm_therapist_last_sync', 0);
     $last_sync_label = $last_sync > 0 ? wp_date('Y-m-d H:i:s', $last_sync) : 'Never';
+    $services_sync_url = wp_nonce_url(admin_url('admin-post.php?action=crm_sync_services_cache'), 'crm_sync_services_cache');
+    $services_last_sync = (int) get_option('crm_service_last_sync', 0);
+    $services_last_sync_label = $services_last_sync > 0 ? wp_date('Y-m-d H:i:s', $services_last_sync) : 'Never';
     
     ?>
     <style>
@@ -149,6 +161,7 @@ function crm_dashboard_page() {
             }
 
             #tab-therapists .card-header > div:last-child,
+            #tab-services .card-header > div:last-child,
             #tab-availability .crm-section-card > div[style*="display:flex"],
             #tab-direct-booking form > div[style*="display:flex"] {
                 display: grid !important;
@@ -171,19 +184,23 @@ function crm_dashboard_page() {
 
             /* Therapist table -> mobile cards */
             #tab-therapists .crm-table,
+            #tab-services .crm-table,
             #tab-appointment-logs .crm-table {
                 display: block;
                 overflow: visible;
             }
             #tab-therapists .crm-table thead,
+            #tab-services .crm-table thead,
             #tab-appointment-logs .crm-table thead {
                 display: none;
             }
             #tab-therapists .crm-table tbody,
+            #tab-services .crm-table tbody,
             #tab-appointment-logs .crm-table tbody {
                 display: block;
             }
             #tab-therapists .crm-table tr,
+            #tab-services .crm-table tr,
             #tab-appointment-logs .crm-table tr {
                 display: block;
                 border: 1px solid #e2e8f0;
@@ -193,6 +210,7 @@ function crm_dashboard_page() {
                 overflow: hidden;
             }
             #tab-therapists .crm-table td,
+            #tab-services .crm-table td,
             #tab-appointment-logs .crm-table td {
                 display: flex;
                 justify-content: space-between;
@@ -204,10 +222,12 @@ function crm_dashboard_page() {
                 word-break: break-word;
             }
             #tab-therapists .crm-table td:last-child,
+            #tab-services .crm-table td:last-child,
             #tab-appointment-logs .crm-table td:last-child {
                 border-bottom: 0;
             }
             #tab-therapists .crm-table td::before,
+            #tab-services .crm-table td::before,
             #tab-appointment-logs .crm-table td::before {
                 font-size: 12px;
                 font-weight: 700;
@@ -220,21 +240,29 @@ function crm_dashboard_page() {
             #tab-therapists .crm-table td:nth-child(2)::before { content: "Email"; }
             #tab-therapists .crm-table td:nth-child(3)::before { content: "Experience"; }
             #tab-therapists .crm-table td:nth-child(4)::before { content: "Actions"; }
+            #tab-services .crm-table td:nth-child(1)::before { content: "Service"; }
+            #tab-services .crm-table td:nth-child(2)::before { content: "Code"; }
+            #tab-services .crm-table td:nth-child(3)::before { content: "Category"; }
+            #tab-services .crm-table td:nth-child(4)::before { content: "Duration"; }
+            #tab-services .crm-table td:nth-child(5)::before { content: "Base Rate"; }
             #tab-appointment-logs .crm-table td:nth-child(1)::before { content: "ID"; }
             #tab-appointment-logs .crm-table td:nth-child(2)::before { content: "Client"; }
             #tab-appointment-logs .crm-table td:nth-child(3)::before { content: "Date"; }
             #tab-appointment-logs .crm-table td:nth-child(4)::before { content: "Type"; }
             #tab-appointment-logs .crm-table td:nth-child(5)::before { content: "Appointment Date"; }
-            #tab-appointment-logs .crm-table td:nth-child(6)::before { content: "Therapist"; }
-            #tab-appointment-logs .crm-table td:nth-child(7)::before { content: "Status"; }
+            #tab-appointment-logs .crm-table td:nth-child(6)::before { content: "Service"; }
+            #tab-appointment-logs .crm-table td:nth-child(7)::before { content: "Therapist"; }
+            #tab-appointment-logs .crm-table td:nth-child(8)::before { content: "Status"; }
 
             #tab-therapists .crm-table td[colspan],
+            #tab-services .crm-table td[colspan],
             #tab-appointment-logs .crm-table td[colspan] {
                 display: block;
                 text-align: center;
                 border-bottom: 0;
             }
             #tab-therapists .crm-table td[colspan]::before,
+            #tab-services .crm-table td[colspan]::before,
             #tab-appointment-logs .crm-table td[colspan]::before {
                 content: none;
             }
@@ -287,6 +315,7 @@ function crm_dashboard_page() {
                 <nav id="crm-admin-nav">
                     <a class="nav-item active" data-tab="dashboard"><iconify-icon icon="lucide:layout-dashboard"></iconify-icon> Dashboard</a>
                     <a class="nav-item" data-tab="therapists"><iconify-icon icon="lucide:users"></iconify-icon> Therapists</a>
+                    <a class="nav-item" data-tab="services"><iconify-icon icon="lucide:briefcase-business"></iconify-icon> Services</a>
                     <a class="nav-item" data-tab="availability"><iconify-icon icon="lucide:calendar-range"></iconify-icon> Availability</a>
                     <a class="nav-item" data-tab="direct-booking"><iconify-icon icon="lucide:calendar-plus"></iconify-icon> Direct Booking</a>
                     <a class="nav-item" data-tab="appointment-logs"><iconify-icon icon="lucide:history"></iconify-icon> Appointment Logs</a>
@@ -313,6 +342,11 @@ function crm_dashboard_page() {
                             <label>Total Appointments</label>
                             <div id="crm-total-appointments" class="huge-number" style="color: #3b82f6;"><?php echo $total_appointments; ?></div>
                             <p>Dynamic Real-time Count</p>
+                        </div>
+                        <div class="stat-card">
+                            <label>Active Services</label>
+                            <div id="crm-total-services" class="huge-number"><?php echo (int) $total_services; ?></div>
+                            <p>Services fetched from CRM</p>
                         </div>
                         <div class="stat-card">
                             <label>Sync Status</label>
@@ -359,6 +393,52 @@ function crm_dashboard_page() {
                                 </tr>
                                 <?php endforeach; else: ?>
                                 <tr><td colspan="4" style="text-align:center; padding: 20px;">No therapist profiles available.</td></tr>
+                                <?php endif; ?>
+                            </tbody>
+                        </table>
+                    </div>
+                </section>
+
+                <section id="tab-services" class="crm-tab-content">
+                    <div class="crm-section-card">
+                        <div class="card-header">
+                            <div><h3>Services</h3><p>Active services listed in TherapyFlow CRM.</p></div>
+                            <div style="display:flex; gap:10px; align-items:center;">
+                                <span style="font-size:12px; color:#64748b;">Last Sync: <?php echo esc_html($services_last_sync_label); ?></span>
+                                <a href="<?php echo esc_url($services_sync_url); ?>" class="btn-blue-outline" style="padding:8px 12px; text-decoration:none;">Sync Services</a>
+                                <input type="text" id="service-search" class="table-search" placeholder="Filter by service name/code...">
+                            </div>
+                        </div>
+                        <table class="crm-table">
+                            <thead>
+                                <tr>
+                                    <th>Service</th>
+                                    <th>Code</th>
+                                    <th>Category</th>
+                                    <th>Duration</th>
+                                    <th>Base Rate</th>
+                                </tr>
+                            </thead>
+                            <tbody id="service-table-body">
+                                <?php if(!empty($services)): foreach($services as $s): ?>
+                                <?php
+                                    $service_name = isset($s['serviceName']) ? sanitize_text_field((string) $s['serviceName']) : '';
+                                    if ($service_name === '' && isset($s['fullName'])) $service_name = sanitize_text_field((string) $s['fullName']);
+                                    $service_code = isset($s['serviceCode']) ? sanitize_text_field((string) $s['serviceCode']) : '';
+                                    $service_category = isset($s['category']) ? sanitize_text_field((string) $s['category']) : '';
+                                    $service_duration = isset($s['duration']) ? sanitize_text_field((string) $s['duration']) : '';
+                                    $service_rate = isset($s['baseRate']) ? sanitize_text_field((string) $s['baseRate']) : '';
+                                    if ($service_name === '') $service_name = 'Service';
+                                ?>
+                                <tr>
+                                    <td><strong><?php echo esc_html($service_name); ?></strong></td>
+                                    <td><?php echo esc_html($service_code !== '' ? $service_code : '-'); ?></td>
+                                    <td><?php echo esc_html($service_category !== '' ? $service_category : '-'); ?></td>
+                                    <td><?php echo esc_html($service_duration !== '' ? ($service_duration . ' min') : '-'); ?></td>
+                                    <td><?php echo esc_html($service_rate !== '' ? $service_rate : '-'); ?></td>
+                                </tr>
+                                <?php endforeach; else: ?>
+                                <tr><td colspan="5" style="text-align:center; padding: 20px;">No service profiles available.</td></tr>
                                 <?php endif; ?>
                             </tbody>
                         </table>
@@ -476,7 +556,7 @@ function crm_dashboard_page() {
                     <div class="crm-section-card">
                         <h3>Appointment Sync Logs</h3>
                         <table class="crm-table">
-                            <thead><tr><th>ID</th><th>Client</th><th>Date</th><th>Type</th><th>Appointment Date</th><th>Therapist</th><th>Status</th></tr></thead>
+                            <thead><tr><th>ID</th><th>Client</th><th>Date</th><th>Type</th><th>Appointment Date</th><th>Service</th><th>Therapist</th><th>Status</th></tr></thead>
                             <tbody id="logs-table-body">
                                 <?php if (!empty($booking_logs)) : ?>
                                     <?php foreach ($booking_logs as $log) : ?>
@@ -486,6 +566,7 @@ function crm_dashboard_page() {
                                         $log_date = isset($log['date']) ? sanitize_text_field((string) $log['date']) : '-';
                                         $log_type = isset($log['type']) ? sanitize_text_field((string) $log['type']) : 'online';
                                         $log_appointment_date = isset($log['sessionDate']) ? sanitize_text_field((string) $log['sessionDate']) : '-';
+                                        $log_service_name = isset($log['serviceName']) ? sanitize_text_field((string) $log['serviceName']) : '-';
                                         $log_therapist_name = isset($log['therapistName']) ? sanitize_text_field((string) $log['therapistName']) : '-';
                                         ?>
                                         <tr>
@@ -494,12 +575,13 @@ function crm_dashboard_page() {
                                             <td><?php echo esc_html($log_date); ?></td>
                                             <td><?php echo esc_html(ucfirst($log_type)); ?></td>
                                             <td><?php echo esc_html($log_appointment_date); ?></td>
+                                            <td><?php echo esc_html($log_service_name); ?></td>
                                             <td><?php echo esc_html($log_therapist_name); ?></td>
                                             <td><span class="badge active">Scheduled</span></td>
                                         </tr>
                                     <?php endforeach; ?>
                                 <?php else : ?>
-                                    <tr><td colspan="7" style="text-align:center; padding:20px;">No appointment logs found yet.</td></tr>
+                                    <tr><td colspan="8" style="text-align:center; padding:20px;">No appointment logs found yet.</td></tr>
                                 <?php endif; ?>
                             </tbody>
                         </table>
@@ -675,6 +757,7 @@ function crm_dashboard_page() {
                                 const statusLabel = document.getElementById('crm-status-label');
                                 const syncStatus = document.getElementById('crm-sync-status');
                                 const totalTherapists = document.getElementById('crm-total-therapists');
+                                const totalServices = document.getElementById('crm-total-services');
                                 const totalAppointments = document.getElementById('crm-total-appointments');
                                 const connError = document.getElementById('crm-settings-conn-error');
 
@@ -689,6 +772,9 @@ function crm_dashboard_page() {
                                 }
                                 if (typeof res.data.total_therapists !== 'undefined' && totalTherapists) {
                                     totalTherapists.textContent = String(res.data.total_therapists);
+                                }
+                                if (typeof res.data.total_services !== 'undefined' && totalServices) {
+                                    totalServices.textContent = String(res.data.total_services);
                                 }
                                 if (typeof res.data.total_appointments !== 'undefined' && totalAppointments) {
                                     totalAppointments.textContent = String(res.data.total_appointments);
@@ -727,6 +813,18 @@ function crm_dashboard_page() {
                 searchInput.addEventListener('keyup', function() {
                     const value = this.value.toLowerCase();
                     const rows = document.querySelectorAll('#therapist-table-body tr');
+                    rows.forEach(row => {
+                        row.style.display = row.innerText.toLowerCase().includes(value) ? '' : 'none';
+                    });
+                });
+            }
+
+            // 2b. SERVICE SEARCH
+            const serviceSearchInput = document.getElementById('service-search');
+            if(serviceSearchInput) {
+                serviceSearchInput.addEventListener('keyup', function() {
+                    const value = this.value.toLowerCase();
+                    const rows = document.querySelectorAll('#service-table-body tr');
                     rows.forEach(row => {
                         row.style.display = row.innerText.toLowerCase().includes(value) ? '' : 'none';
                     });

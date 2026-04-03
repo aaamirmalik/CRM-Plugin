@@ -105,6 +105,47 @@ if (!function_exists('crm_get_cached_therapist_profile')) {
     }
 }
 
+if (!function_exists('crm_get_cached_services')) {
+    function crm_get_cached_services() {
+        $q = new WP_Query([
+            'post_type' => 'crm_services',
+            'post_status' => 'publish',
+            'posts_per_page' => -1,
+            'orderby' => 'title',
+            'order' => 'ASC',
+            'fields' => 'ids',
+            'no_found_rows' => true,
+        ]);
+
+        if (empty($q->posts)) return [];
+
+        $out = [];
+        foreach ($q->posts as $post_id) {
+            $crm_id = (string) get_post_meta($post_id, '_crm_service_id', true);
+            if ($crm_id === '') continue;
+            $raw = get_post_meta($post_id, '_crm_service_raw', true);
+            $raw_therapists = (is_array($raw) && isset($raw['therapists']) && is_array($raw['therapists'])) ? $raw['therapists'] : [];
+            $meta_therapists = (array) get_post_meta($post_id, '_crm_service_therapists', true);
+            $therapists = !empty($meta_therapists) ? $meta_therapists : $raw_therapists;
+            $out[] = [
+                'id' => $crm_id,
+                'serviceCode' => (string) get_post_meta($post_id, '_crm_service_code', true),
+                'serviceName' => get_the_title($post_id),
+                'shortDescription' => (string) get_post_meta($post_id, '_crm_short_description', true),
+                'duration' => (string) get_post_meta($post_id, '_crm_service_duration', true),
+                'baseRate' => (string) get_post_meta($post_id, '_crm_base_rate', true),
+                'category' => (string) get_post_meta($post_id, '_crm_category', true),
+                'categories' => (array) get_post_meta($post_id, '_crm_categories', true),
+                'featured' => (bool) get_post_meta($post_id, '_crm_featured', true),
+                'tags' => (array) get_post_meta($post_id, '_crm_tags', true),
+                'imageUrl' => (string) get_post_meta($post_id, '_crm_service_image_url', true),
+                'therapists' => $therapists,
+            ];
+        }
+        return $out;
+    }
+}
+
 if (!function_exists('crm_booking_register_therapist_post_type_for_rewrite')) {
     function crm_booking_register_therapist_post_type_for_rewrite() {
         register_post_type('crm_therapist', [
@@ -129,9 +170,34 @@ if (!function_exists('crm_booking_register_therapist_post_type_for_rewrite')) {
     }
 }
 
+if (!function_exists('crm_booking_register_service_post_type_for_rewrite')) {
+    function crm_booking_register_service_post_type_for_rewrite() {
+        register_post_type('crm_services', [
+            'labels' => [
+                'name' => 'Services',
+                'singular_name' => 'Service',
+                'menu_name' => 'Services',
+                'add_new_item' => 'Add Service',
+                'edit_item' => 'Edit Service',
+            ],
+            'public' => true,
+            'publicly_queryable' => true,
+            'has_archive' => true,
+            'rewrite' => ['slug' => 'services'],
+            'exclude_from_search' => false,
+            'show_ui' => true,
+            'show_in_menu' => 'crm-dashboard',
+            'supports' => ['title', 'editor', 'thumbnail', 'custom-fields'],
+            'capability_type' => 'post',
+            'map_meta_cap' => true,
+        ]);
+    }
+}
+
 if (!function_exists('crm_booking_plugin_activate')) {
     function crm_booking_plugin_activate() {
         crm_booking_register_therapist_post_type_for_rewrite();
+        crm_booking_register_service_post_type_for_rewrite();
         flush_rewrite_rules();
     }
 }
@@ -148,13 +214,17 @@ register_deactivation_hook(__FILE__, 'crm_booking_plugin_deactivate');
 class CRM_Connector_Core {
     public function __construct() {
         add_action('init', [$this, 'register_therapist_cpt']);
+        add_action('init', [$this, 'register_service_cpt']);
         add_action('init', [$this, 'maybe_sync_therapists_cache']);
+        add_action('init', [$this, 'maybe_sync_services_cache']);
         add_action('admin_post_crm_sync_therapists_cache', [$this, 'handle_manual_therapist_sync']);
+        add_action('admin_post_crm_sync_services_cache', [$this, 'handle_manual_services_sync']);
         add_action('admin_menu', [$this, 'create_menu']);
         add_action('admin_menu', [$this, 'reorder_crm_submenu'], 999);
         add_action('admin_enqueue_scripts', [$this, 'enqueue_admin_assets']);
         add_action('wp_enqueue_scripts', [$this, 'enqueue_frontend_assets']);
         add_action('add_meta_boxes', [$this, 'register_therapist_profile_metabox']);
+        add_action('add_meta_boxes', [$this, 'register_service_profile_metabox']);
         
         add_action('wp_ajax_crm_mark_notifications_read', [$this, 'ajax_mark_notifications_read']);
         add_action('wp_ajax_save_crm_settings_action', [$this, 'save_crm_settings_via_ajax']);
@@ -190,6 +260,7 @@ class CRM_Connector_Core {
         $items = $submenu['crm-dashboard'];
         $dashboard = [];
         $therapists = [];
+        $services = [];
         $others = [];
 
         foreach ($items as $item) {
@@ -198,12 +269,14 @@ class CRM_Connector_Core {
                 $dashboard[] = $item;
             } elseif ($slug === 'edit.php?post_type=crm_therapist') {
                 $therapists[] = $item;
+            } elseif ($slug === 'edit.php?post_type=crm_services') {
+                $services[] = $item;
             } else {
                 $others[] = $item;
             }
         }
 
-        $submenu['crm-dashboard'] = array_merge($dashboard, $therapists, $others);
+        $submenu['crm-dashboard'] = array_merge($dashboard, $therapists, $services, $others);
     }
 
     public function enqueue_admin_assets($hook) {
@@ -288,6 +361,17 @@ class CRM_Connector_Core {
         );
     }
 
+    public function register_service_profile_metabox() {
+        add_meta_box(
+            'crm_service_profile_box',
+            'CRM Service Data',
+            [$this, 'render_service_profile_metabox'],
+            'crm_services',
+            'normal',
+            'high'
+        );
+    }
+
     public function render_therapist_profile_metabox($post) {
         $crm_id = (string) get_post_meta($post->ID, '_crm_therapist_id', true);
         $email = (string) get_post_meta($post->ID, '_crm_email', true);
@@ -311,6 +395,38 @@ class CRM_Connector_Core {
                 <tr><th>Languages</th><td><?php echo esc_html(!empty($languages) ? implode(', ', $languages) : '-'); ?></td></tr>
                 <tr><th>Specializations</th><td><?php echo esc_html(!empty($specializations) ? implode(', ', $specializations) : '-'); ?></td></tr>
                 <tr><th>Approaches</th><td><?php echo esc_html(!empty($approaches) ? implode(', ', $approaches) : '-'); ?></td></tr>
+            </tbody>
+        </table>
+        <p><strong>Raw API Payload (for debugging):</strong></p>
+        <textarea readonly style="width:100%; min-height:220px; font-family:monospace;"><?php echo esc_textarea(wp_json_encode($raw, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES)); ?></textarea>
+        <?php
+    }
+
+    public function render_service_profile_metabox($post) {
+        $crm_id = (string) get_post_meta($post->ID, '_crm_service_id', true);
+        $service_code = (string) get_post_meta($post->ID, '_crm_service_code', true);
+        $duration = (string) get_post_meta($post->ID, '_crm_service_duration', true);
+        $base_rate = (string) get_post_meta($post->ID, '_crm_base_rate', true);
+        $category = (string) get_post_meta($post->ID, '_crm_category', true);
+        $categories = (array) get_post_meta($post->ID, '_crm_categories', true);
+        $tags = (array) get_post_meta($post->ID, '_crm_tags', true);
+        $featured = (bool) get_post_meta($post->ID, '_crm_featured', true);
+        $image_url = (string) get_post_meta($post->ID, '_crm_service_image_url', true);
+        $short_description = (string) get_post_meta($post->ID, '_crm_short_description', true);
+        $raw = get_post_meta($post->ID, '_crm_service_raw', true);
+        ?>
+        <table class="widefat striped" style="margin-bottom:12px;">
+            <tbody>
+                <tr><th style="width:180px;">CRM Service ID</th><td><?php echo esc_html($crm_id ?: '-'); ?></td></tr>
+                <tr><th>Service Code</th><td><?php echo esc_html($service_code ?: '-'); ?></td></tr>
+                <tr><th>Duration</th><td><?php echo esc_html($duration !== '' ? ($duration . ' min') : '-'); ?></td></tr>
+                <tr><th>Base Rate</th><td><?php echo esc_html($base_rate !== '' ? $base_rate : '-'); ?></td></tr>
+                <tr><th>Category</th><td><?php echo esc_html($category ?: '-'); ?></td></tr>
+                <tr><th>Categories</th><td><?php echo esc_html(!empty($categories) ? implode(', ', $categories) : '-'); ?></td></tr>
+                <tr><th>Tags</th><td><?php echo esc_html(!empty($tags) ? implode(', ', $tags) : '-'); ?></td></tr>
+                <tr><th>Featured</th><td><?php echo esc_html($featured ? 'Yes' : 'No'); ?></td></tr>
+                <tr><th>Image URL</th><td><?php echo esc_html($image_url ?: '-'); ?></td></tr>
+                <tr><th>Short Description</th><td><?php echo esc_html($short_description ?: '-'); ?></td></tr>
             </tbody>
         </table>
         <p><strong>Raw API Payload (for debugging):</strong></p>
@@ -604,8 +720,11 @@ class CRM_Connector_Core {
         $api = new CRM_API_Handler();
         $therapists = $api->get_all_therapists();
         $api_error = $api->get_last_error();
+        $services = $api->get_all_services();
+        $services_error = $api->get_last_error();
         $connected = is_array($therapists) && !empty($therapists) && $api_error === '';
         $total_therapists = $connected ? count($therapists) : 0;
+        $total_services = (is_array($services) && $services_error === '') ? count($services) : 0;
         $total_appointments = $api->get_appointment_count();
 
         wp_send_json_success([
@@ -614,6 +733,7 @@ class CRM_Connector_Core {
             'status_label' => $connected ? 'Connected' : 'Disconnected',
             'sync_status' => $connected ? 'Active' : 'Inactive',
             'total_therapists' => $total_therapists,
+            'total_services' => $total_services,
             'total_appointments' => $total_appointments,
             'api_error' => $api_error,
         ]);
@@ -726,8 +846,24 @@ class CRM_Connector_Core {
             return new WP_Error('missing_therapist', 'Therapist is required.');
         }
 
-        $allowed_service_ids = ['50', '51', '52', '53', '54', '55', '56'];
-        if (!in_array($service_id, $allowed_service_ids, true)) {
+        if ($service_id === '') {
+            return new WP_Error('missing_service', 'Service is required.');
+        }
+        $allowed_service_ids = [];
+        if (function_exists('crm_get_cached_services')) {
+            $cached_services = crm_get_cached_services();
+            if (is_array($cached_services)) {
+                foreach ($cached_services as $service_row) {
+                    if (!is_array($service_row)) continue;
+                    $sid = isset($service_row['id']) ? sanitize_text_field((string) $service_row['id']) : '';
+                    if ($sid !== '') $allowed_service_ids[] = $sid;
+                }
+            }
+        }
+        if (!empty($allowed_service_ids) && !in_array($service_id, $allowed_service_ids, true)) {
+            return new WP_Error('invalid_service', 'Invalid service selected.');
+        }
+        if (empty($allowed_service_ids) && !preg_match('/^[A-Za-z0-9\-_]+$/', $service_id)) {
             return new WP_Error('invalid_service', 'Invalid service selected.');
         }
         if (!$this->is_valid_iso_date($session_date)) {
@@ -776,12 +912,24 @@ class CRM_Connector_Core {
         crm_booking_register_therapist_post_type_for_rewrite();
     }
 
+    public function register_service_cpt() {
+        crm_booking_register_service_post_type_for_rewrite();
+    }
+
     public function maybe_sync_therapists_cache() {
         if (!is_admin() || wp_doing_ajax()) return;
         if (!current_user_can('manage_options')) return;
         $last = (int) get_option('crm_therapist_last_sync', 0);
         if ($last > 0 && (time() - $last) < (15 * MINUTE_IN_SECONDS)) return;
         $this->sync_therapists_to_posts(false);
+    }
+
+    public function maybe_sync_services_cache() {
+        if (!is_admin() || wp_doing_ajax()) return;
+        if (!current_user_can('manage_options')) return;
+        $last = (int) get_option('crm_service_last_sync', 0);
+        if ($last > 0 && (time() - $last) < (15 * MINUTE_IN_SECONDS)) return;
+        $this->sync_services_to_posts(false);
     }
 
     public function handle_manual_therapist_sync() {
@@ -792,6 +940,17 @@ class CRM_Connector_Core {
         $this->sync_therapists_to_posts(true);
         $redirect = isset($_SERVER['HTTP_REFERER']) ? wp_get_referer() : admin_url('edit.php?post_type=crm_therapist');
         wp_safe_redirect($redirect ? $redirect : admin_url('edit.php?post_type=crm_therapist'));
+        exit;
+    }
+
+    public function handle_manual_services_sync() {
+        if (!current_user_can('manage_options')) {
+            wp_die('Unauthorized request.');
+        }
+        check_admin_referer('crm_sync_services_cache');
+        $this->sync_services_to_posts(true);
+        $redirect = isset($_SERVER['HTTP_REFERER']) ? wp_get_referer() : admin_url('edit.php?post_type=crm_services');
+        wp_safe_redirect($redirect ? $redirect : admin_url('edit.php?post_type=crm_services'));
         exit;
     }
 
@@ -919,6 +1078,99 @@ class CRM_Connector_Core {
         delete_transient('crm_therapist_sync_lock');
     }
 
+    private function sync_services_to_posts($force = false, $seed_services = null) {
+        if (!$force && get_transient('crm_service_sync_lock')) return;
+        set_transient('crm_service_sync_lock', 1, 2 * MINUTE_IN_SECONDS);
+
+        $api = new CRM_API_Handler();
+        $services = is_array($seed_services) ? $seed_services : $api->get_all_services();
+        if (!is_array($services) || empty($services)) {
+            delete_transient('crm_service_sync_lock');
+            return;
+        }
+
+        foreach ($services as $service_row) {
+            if (!is_array($service_row)) continue;
+            $crm_id = isset($service_row['id']) ? sanitize_text_field((string) $service_row['id']) : '';
+            if ($crm_id === '') continue;
+
+            $service_raw = $api->get_service($crm_id);
+            if (!is_array($service_raw) || empty($service_raw)) {
+                $service_raw = $service_row;
+            }
+
+            $service_name = isset($service_raw['serviceName']) ? sanitize_text_field((string) $service_raw['serviceName']) : '';
+            if ($service_name === '' && isset($service_row['serviceName'])) {
+                $service_name = sanitize_text_field((string) $service_row['serviceName']);
+            }
+            if ($service_name === '') $service_name = 'Service ' . $crm_id;
+
+            $service_code = isset($service_raw['serviceCode']) ? sanitize_text_field((string) $service_raw['serviceCode']) : '';
+            $short_description = isset($service_raw['shortDescription']) ? sanitize_textarea_field((string) $service_raw['shortDescription']) : '';
+            $description = isset($service_raw['description']) ? wp_kses_post((string) $service_raw['description']) : '';
+            $duration = isset($service_raw['duration']) ? sanitize_text_field((string) $service_raw['duration']) : '';
+            $base_rate = isset($service_raw['baseRate']) ? sanitize_text_field((string) $service_raw['baseRate']) : '';
+            $category = isset($service_raw['category']) ? sanitize_text_field((string) $service_raw['category']) : '';
+            $categories = isset($service_raw['categories']) && is_array($service_raw['categories'])
+                ? array_values(array_filter(array_map('sanitize_text_field', $service_raw['categories'])))
+                : [];
+            $tags = isset($service_raw['tags']) && is_array($service_raw['tags'])
+                ? array_values(array_filter(array_map('sanitize_text_field', $service_raw['tags'])))
+                : [];
+            $featured = !empty($service_raw['featured']);
+            $image_url = isset($service_raw['imageUrl']) ? esc_url_raw((string) $service_raw['imageUrl']) : '';
+            $therapists = isset($service_raw['therapists']) && is_array($service_raw['therapists']) ? $service_raw['therapists'] : [];
+
+            $summary_lines = [];
+            if ($service_code !== '') $summary_lines[] = 'Code: ' . $service_code;
+            if ($duration !== '') $summary_lines[] = 'Duration: ' . $duration . ' min';
+            if ($base_rate !== '') $summary_lines[] = 'Base Rate: ' . $base_rate;
+            if ($category !== '') $summary_lines[] = 'Category: ' . $category;
+            if (!empty($categories)) $summary_lines[] = 'Categories: ' . implode(', ', $categories);
+            if (!empty($tags)) $summary_lines[] = 'Tags: ' . implode(', ', $tags);
+
+            $content = $description !== '' ? $description : '';
+            if ($content === '' && $short_description !== '') {
+                $content = wpautop(esc_html($short_description));
+            }
+            if (!empty($summary_lines)) {
+                $content .= ($content ? "\n\n" : '') . '<p><strong>Service Summary</strong><br>' . esc_html(implode(' | ', $summary_lines)) . '</p>';
+            }
+
+            $post_id = $this->find_service_post_by_crm_id($crm_id);
+            $post_data = [
+                'post_type' => 'crm_services',
+                'post_status' => 'publish',
+                'post_title' => $service_name,
+                'post_content' => $content,
+                'post_excerpt' => $short_description !== '' ? $short_description : sanitize_text_field(implode(' | ', $summary_lines)),
+            ];
+            if ($post_id > 0) {
+                $post_data['ID'] = $post_id;
+                wp_update_post($post_data);
+            } else {
+                $post_id = wp_insert_post($post_data);
+            }
+            if (!$post_id || is_wp_error($post_id)) continue;
+
+            update_post_meta($post_id, '_crm_service_id', $crm_id);
+            update_post_meta($post_id, '_crm_service_code', $service_code);
+            update_post_meta($post_id, '_crm_short_description', $short_description);
+            update_post_meta($post_id, '_crm_service_duration', $duration);
+            update_post_meta($post_id, '_crm_base_rate', $base_rate);
+            update_post_meta($post_id, '_crm_category', $category);
+            update_post_meta($post_id, '_crm_categories', $categories);
+            update_post_meta($post_id, '_crm_featured', $featured ? '1' : '0');
+            update_post_meta($post_id, '_crm_tags', $tags);
+            update_post_meta($post_id, '_crm_service_image_url', $image_url);
+            update_post_meta($post_id, '_crm_service_therapists', $therapists);
+            update_post_meta($post_id, '_crm_service_raw', $service_raw);
+        }
+
+        update_option('crm_service_last_sync', time(), false);
+        delete_transient('crm_service_sync_lock');
+    }
+
     private function find_therapist_post_by_crm_id($crm_id) {
         $q = new WP_Query([
             'post_type' => 'crm_therapist',
@@ -928,6 +1180,25 @@ class CRM_Connector_Core {
             'meta_query' => [
                 [
                     'key' => '_crm_therapist_id',
+                    'value' => $crm_id,
+                    'compare' => '=',
+                ]
+            ],
+            'no_found_rows' => true,
+        ]);
+        if (empty($q->posts)) return 0;
+        return (int) $q->posts[0];
+    }
+
+    private function find_service_post_by_crm_id($crm_id) {
+        $q = new WP_Query([
+            'post_type' => 'crm_services',
+            'post_status' => 'any',
+            'posts_per_page' => 1,
+            'fields' => 'ids',
+            'meta_query' => [
+                [
+                    'key' => '_crm_service_id',
                     'value' => $crm_id,
                     'compare' => '=',
                 ]

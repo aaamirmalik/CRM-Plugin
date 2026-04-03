@@ -181,6 +181,39 @@ private function extract_bio_sections($text) {
         return [];
     }
 
+    private function get_services_cache() {
+        $services = function_exists('crm_get_cached_services') ? crm_get_cached_services() : [];
+        return is_array($services) ? $services : [];
+    }
+
+    private function get_services_for_therapist($therapist_id) {
+        $therapist_id = sanitize_text_field((string) $therapist_id);
+        if ($therapist_id === '') return [];
+        $services = $this->get_services_cache();
+        $matched = [];
+        foreach ($services as $s) {
+            if (!is_array($s)) continue;
+            $sid = isset($s['id']) ? sanitize_text_field((string) $s['id']) : '';
+            $name = isset($s['serviceName']) ? sanitize_text_field((string) $s['serviceName']) : '';
+            if ($sid === '' || $name === '') continue;
+            $therapists = isset($s['therapists']) && is_array($s['therapists']) ? $s['therapists'] : [];
+            foreach ($therapists as $t) {
+                if (!is_array($t)) continue;
+                $tid = '';
+                if (isset($t['therapistId'])) {
+                    $tid = sanitize_text_field((string) $t['therapistId']);
+                } elseif (isset($t['id'])) {
+                    $tid = sanitize_text_field((string) $t['id']);
+                }
+                if ($tid !== '' && $tid === $therapist_id) {
+                    $matched[$sid] = $name;
+                    break;
+                }
+            }
+        }
+        return $matched;
+    }
+
     private function get_current_team_fallback_data() {
         $post_id = 0;
         if (is_singular('team')) {
@@ -400,6 +433,10 @@ private function extract_bio_sections($text) {
         if (empty($payload['therapistId']) || empty($payload['sessionDate']) || empty($payload['sessionTime'])) {
             wp_send_json(['ok' => false, 'message' => 'Please select therapist, date and time.', 'used_fallback' => false], 400);
         }
+        $allowed_services = $this->get_services_for_therapist($payload['therapistId']);
+        if (!empty($allowed_services) && !isset($allowed_services[$payload['serviceId']])) {
+            wp_send_json(['ok' => false, 'message' => 'Selected service is not available for this therapist.', 'used_fallback' => false], 400);
+        }
         if (!in_array($payload['sessionType'], ['online', 'in-person'], true)) {
             $payload['sessionType'] = 'online';
         }
@@ -423,7 +460,7 @@ private function extract_bio_sections($text) {
     }
 
     public function render_shortcode($atts) {
-        $atts = shortcode_atts(['therapist_id' => '', 'therapist_name' => '', 'service_id' => '50', 'session_type' => 'online'], $atts, 'crm_profile_booking');
+        $atts = shortcode_atts(['therapist_id' => '', 'therapist_name' => '', 'service_id' => '', 'session_type' => 'online'], $atts, 'crm_profile_booking');
         $api = new CRM_API_Handler();
         $therapists = $api->get_all_therapists();
         if (!is_array($therapists) || empty($therapists)) {
@@ -465,6 +502,21 @@ private function extract_bio_sections($text) {
         $archive_url = get_post_type_archive_link('therapist');
         if (!$archive_url) $archive_url = home_url('/therapist/');
 
+        $request_service_id = isset($_GET['service_id']) ? sanitize_text_field($_GET['service_id']) : '';
+        $resolved_service_id = $request_service_id !== '' ? $request_service_id : (string) $atts['service_id'];
+        if ($resolved_service_id === '' && is_singular('crm_services')) {
+            $resolved_service_id = (string) get_post_meta(get_queried_object_id(), '_crm_service_id', true);
+        }
+        $services_for_therapist = $tid ? $this->get_services_for_therapist($tid) : [];
+        if (!empty($services_for_therapist) && $resolved_service_id !== '' && !isset($services_for_therapist[$resolved_service_id])) {
+            $resolved_service_id = '';
+        }
+        if ($resolved_service_id === '' && !empty($services_for_therapist)) {
+            $service_ids = array_keys($services_for_therapist);
+            $resolved_service_id = (string) $service_ids[0];
+        }
+        if ($resolved_service_id === '') $resolved_service_id = '50';
+
         ob_start(); ?>
         <div class="crm-profile-export-wrapper">
             <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -502,6 +554,12 @@ private function extract_bio_sections($text) {
                 .crm-modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:12px}
                 .crm-btn-secondary{background:#fff;border:1px solid var(--border);border-radius:10px;padding:10px 14px;cursor:pointer}
                 .crm-modal-message{font-size:13px; margin-top:10px; min-height:18px}
+                .crm-success-overlay{position:fixed;inset:0;background:rgba(15,23,42,.55);display:none;align-items:center;justify-content:center;padding:16px;z-index:99999}
+                .crm-success-overlay.open{display:flex}
+                .crm-success-card{background:#fff;max-width:420px;width:100%;border-radius:12px;padding:18px;border:1px solid var(--border);text-align:center;box-shadow:0 20px 40px rgba(15,23,42,.18)}
+                .crm-success-card h4{margin:0 0 8px;font-size:20px}
+                .crm-success-card p{margin:0 0 14px;color:#475569;font-size:14px}
+                .crm-success-card button{background:var(--primary);color:#fff;border:none;border-radius:10px;padding:10px 16px;cursor:pointer}
                 @media (max-width: 960px){.crm-profile-container{padding:20px}.crm-profile-intro{flex-direction:column}.crm-profile-content-grid{grid-template-columns:1fr} .crm-profile-info{width:100%}}
             </style>
             <div class="crm-profile-container">
@@ -531,8 +589,18 @@ private function extract_bio_sections($text) {
                         <section><h2>Therapeutic Approaches</h2><div class="crm-tags"><?php foreach ($p['approaches'] as $a): ?><span class="crm-badge"><?php echo esc_html($a); ?></span><?php endforeach; ?></div></section>
                     </div>
                     <aside>
-                        <div class="crm-booking-widget" id="crm-profile-widget" data-ajax="<?php echo esc_url(admin_url('admin-ajax.php')); ?>" data-therapist="<?php echo esc_attr($tid); ?>" data-service="<?php echo esc_attr($atts['service_id']); ?>" data-session="<?php echo esc_attr($atts['session_type']); ?>">
+                        <div class="crm-booking-widget" id="crm-profile-widget" data-ajax="<?php echo esc_url(admin_url('admin-ajax.php')); ?>" data-therapist="<?php echo esc_attr($tid); ?>" data-service="<?php echo esc_attr($resolved_service_id); ?>" data-session="<?php echo esc_attr($atts['session_type']); ?>" data-services="<?php echo esc_attr(wp_json_encode($services_for_therapist)); ?>">
                             <h3 style="text-align:center;margin:0 0 4px">Book an Appointment</h3><p style="text-align:center;color:#6b7280;font-size:13px;margin:0 0 12px">Select a date and time to schedule a session.</p>
+                            <?php if (!empty($services_for_therapist)) : ?>
+                                <div style="margin-bottom:12px;">
+                                    <label for="crm-profile-service" style="display:block;font-size:12px;font-weight:600;margin-bottom:6px;">Service</label>
+                                    <select id="crm-profile-service" style="width:100%;border:1px solid var(--border);border-radius:8px;padding:10px;">
+                                        <?php foreach ($services_for_therapist as $sid => $sname): ?>
+                                            <option value="<?php echo esc_attr($sid); ?>" <?php selected((string)$sid, (string)$resolved_service_id); ?>><?php echo esc_html($sname); ?></option>
+                                        <?php endforeach; ?>
+                                    </select>
+                                </div>
+                            <?php endif; ?>
                             <div class="crm-calendar-nav"><button class="crm-calendar-nav-btn" id="crm-prev" type="button"><iconify-icon icon="lucide:chevron-left"></iconify-icon></button><span id="crm-month-title"></span><button class="crm-calendar-nav-btn" id="crm-next" type="button"><iconify-icon icon="lucide:chevron-right"></iconify-icon></button></div>
                             <div class="crm-calendar-grid" id="crm-calendar-grid"></div>
                             <div style="display:flex;justify-content:space-between;font-size:14px;font-weight:600;margin:12px 0 8px">Available Times <span id="crm-slots-date" style="font-weight:400;color:#6b7280">Select a date</span></div>
@@ -566,11 +634,21 @@ private function extract_bio_sections($text) {
                     </div>
                 </div>
             </div>
+            <div class="crm-success-overlay" id="crm-success-overlay">
+                <div class="crm-success-card">
+                    <h4>Appointment Confirmed</h4>
+                    <p id="crm-success-message">Your appointment has been booked successfully.</p>
+                    <button type="button" id="crm-success-ok">OK</button>
+                </div>
+            </div>
         </div>
         <script>
             (function(){
                 const root=document.getElementById('crm-profile-widget'); if(!root) return;
-                const ajaxUrl=root.dataset.ajax, therapistId=root.dataset.therapist||'', serviceId=root.dataset.service||'50', sessionType=root.dataset.session||'online';
+                const ajaxUrl=root.dataset.ajax, therapistId=root.dataset.therapist||'', sessionType=root.dataset.session||'online';
+                let serviceId=root.dataset.service||'50';
+                let services={};
+                try{services=JSON.parse(root.dataset.services||'{}')||{}}catch(e){services={};}
                 const bookingNonce='<?php echo esc_js(wp_create_nonce('crm_public_booking_nonce')); ?>';
                 const cal=document.getElementById('crm-calendar-grid'), monthTitle=document.getElementById('crm-month-title'), slotsGrid=document.getElementById('crm-slots-grid');
                 const slotsDate=document.getElementById('crm-slots-date'), sumDate=document.getElementById('crm-sum-date'), sumTime=document.getElementById('crm-sum-time');
@@ -580,7 +658,9 @@ private function extract_bio_sections($text) {
                 const emailInput=document.getElementById('crm-client-email'), notesInput=document.getElementById('crm-client-notes');
                 const sessionTypeInput=document.getElementById('crm-client-session-type');
                 const modalMessage=document.getElementById('crm-modal-message');
+                const successOk=document.getElementById('crm-success-ok');
                 const days=['Su','Mo','Tu','We','Th','Fr','Sa'];
+                const serviceSelect=document.getElementById('crm-profile-service');
                 let view=new Date(), selectedDate='', selectedTime='';
                 const iso=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
                 const todayIso=iso(new Date());
@@ -601,6 +681,12 @@ private function extract_bio_sections($text) {
                 function loadSlots(){if(!selectedDate||!therapistId)return; slotsGrid.innerHTML='<div style="grid-column:span 2;color:#6b7280;font-size:13px">Loading slots...</div>'; status.textContent='Loading slots...'; const body=new URLSearchParams(); body.append('action','crm_profile_slots'); body.append('therapist_id',therapistId); body.append('date',selectedDate); body.append('session_type',sessionType); body.append('nonce',bookingNonce); fetch(ajaxUrl,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded; charset=UTF-8'},body:body.toString()}).then(r=>r.json()).then(res=>{if(res&&Array.isArray(res.slots)){renderSlots(res.slots); if(res.message)status.textContent=res.message;} else {renderSlots([]); if(res&&res.message)status.textContent=res.message;}}).catch(()=>{renderSlots([]); status.textContent='Could not load slots from API.';});}
                 function openBookingModal(){if(!selectedDate||!selectedTime){status.textContent='Please select a date and time first.';status.style.color='#dc2626';return;}sessionTypeInput.value=sessionType;if(modalMessage){modalMessage.textContent='';modalMessage.style.color='#6b7280';}modal.classList.add('open');}
                 function closeBookingModal(){modal.classList.remove('open');}
+                function showSuccessPopup(message){
+                    const overlay=document.getElementById('crm-success-overlay');
+                    const msgEl=document.getElementById('crm-success-message');
+                    if(msgEl) msgEl.textContent=message;
+                    if(overlay) overlay.classList.add('open');
+                }
                 function submitBooking(){
                     const fullName=(nameInput.value||'').trim(), email=(emailInput.value||'').trim(), notes=(notesInput.value||'').trim();
                     if(!fullName||!email){if(modalMessage){modalMessage.style.color='#dc2626';modalMessage.textContent='Please enter your name and email.';}return;}
@@ -617,9 +703,19 @@ private function extract_bio_sections($text) {
                     body.append('booking_data[sessionType]',sessionTypeInput.value||sessionType);
                     body.append('booking_data[duration]','50');
                     body.append('nonce',bookingNonce);
-                    fetch(ajaxUrl,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded; charset=UTF-8'},body:body.toString()}).then(r=>r.json()).then(res=>{if(res&&res.ok&&res.appointment&&res.appointment.id){if(modalMessage){modalMessage.style.color='#16a34a';modalMessage.textContent='Appointment confirmed successfully. ID: '+res.appointment.id;}status.style.color='#16a34a';status.textContent='Live booking completed via API.';setTimeout(()=>{closeBookingModal();},900);}else{const msg=(res&&res.message)?res.message:'Booking failed.';if(modalMessage){modalMessage.style.color='#dc2626';modalMessage.textContent=msg;}status.style.color='#dc2626';status.textContent=msg;}})
+                    fetch(ajaxUrl,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded; charset=UTF-8'},body:body.toString()}).then(r=>r.json()).then(res=>{if(res&&res.ok&&res.appointment&&res.appointment.id){const id=' ID: '+res.appointment.id; showSuccessPopup('Appointment confirmed successfully.'+id); return;}else{const msg=(res&&res.message)?res.message:'Booking failed.';if(modalMessage){modalMessage.style.color='#dc2626';modalMessage.textContent=msg;}status.style.color='#dc2626';status.textContent=msg;}})
                     .catch(()=>{if(modalMessage){modalMessage.style.color='#dc2626';modalMessage.textContent='Booking API unavailable.';}status.style.color='#dc2626';status.textContent='Booking API unavailable.';}).finally(()=>{submitBookingBtn.disabled=false;submitBookingBtn.textContent='Confirm Appointment';});
                 }
+                if(serviceSelect){
+                    serviceSelect.addEventListener('change', function(){
+                        serviceId=this.value||serviceId;
+                    });
+                } else if (services && Object.keys(services).length) {
+                    const first=Object.keys(services)[0];
+                    if(!serviceId || !services[serviceId]) serviceId=first;
+                }
+
+                if(successOk) successOk.onclick=()=>{window.location.reload();};
                 prev.onclick=()=>{view=new Date(view.getFullYear(),view.getMonth()-1,1);drawCalendar();}; next.onclick=()=>{view=new Date(view.getFullYear(),view.getMonth()+1,1);drawCalendar();}; cont.onclick=openBookingModal;
                 closeModalBtn.onclick=closeBookingModal; submitBookingBtn.onclick=submitBooking; modal.onclick=(e)=>{if(e.target===modal)closeBookingModal();};
                 drawCalendar();

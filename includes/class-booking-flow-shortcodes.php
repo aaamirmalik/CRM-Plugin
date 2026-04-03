@@ -21,7 +21,28 @@ class CRM_Booking_Flow_Shortcodes {
     }
 
     private function service_map() {
-        return [
+        $services = function_exists('crm_get_cached_services') ? crm_get_cached_services() : [];
+        if (!is_array($services) || empty($services)) {
+            return [
+                '50' => 'Individual Counselling',
+                '51' => 'Free Consultation (15m)',
+                '52' => 'Family Counselling',
+                '53' => 'Anger Management',
+                '54' => 'Refugee Counselling',
+                '55' => 'MVA Counselling',
+                '56' => 'Student Counselling'
+            ];
+        }
+
+        $out = [];
+        foreach ($services as $s) {
+            if (!is_array($s)) continue;
+            $id = isset($s['id']) ? sanitize_text_field((string) $s['id']) : '';
+            $name = isset($s['serviceName']) ? sanitize_text_field((string) $s['serviceName']) : '';
+            if ($id === '' || $name === '') continue;
+            $out[$id] = $name;
+        }
+        return !empty($out) ? $out : [
             '50' => 'Individual Counselling',
             '51' => 'Free Consultation (15m)',
             '52' => 'Family Counselling',
@@ -30,6 +51,84 @@ class CRM_Booking_Flow_Shortcodes {
             '55' => 'MVA Counselling',
             '56' => 'Student Counselling'
         ];
+    }
+
+    private function service_therapist_map() {
+        $services = function_exists('crm_get_cached_services') ? crm_get_cached_services() : [];
+        $map = [];
+        if (!is_array($services)) return $map;
+
+        foreach ($services as $s) {
+            if (!is_array($s)) continue;
+            $service_id = isset($s['id']) ? sanitize_text_field((string) $s['id']) : '';
+            if ($service_id === '') continue;
+            $therapists = isset($s['therapists']) && is_array($s['therapists']) ? $s['therapists'] : [];
+            $ids = [];
+            foreach ($therapists as $t) {
+                if (!is_array($t)) continue;
+                $tid = '';
+                if (isset($t['therapistId'])) {
+                    $tid = sanitize_text_field((string) $t['therapistId']);
+                } elseif (isset($t['id'])) {
+                    $tid = sanitize_text_field((string) $t['id']);
+                }
+                if ($tid !== '') $ids[] = $tid;
+            }
+            $map[$service_id] = array_values(array_unique($ids));
+        }
+        // If cache doesn't include therapist mapping, attempt a live fetch as fallback.
+        if (empty($map)) {
+            $api = new CRM_API_Handler();
+            $services_live = $api->get_all_services();
+            if (is_array($services_live)) {
+                foreach ($services_live as $s) {
+                    if (!is_array($s)) continue;
+                    $service_id = isset($s['id']) ? sanitize_text_field((string) $s['id']) : '';
+                    if ($service_id === '') continue;
+                    $therapists = isset($s['therapists']) && is_array($s['therapists']) ? $s['therapists'] : [];
+                    $ids = [];
+                    foreach ($therapists as $t) {
+                        if (!is_array($t)) continue;
+                        $tid = '';
+                        if (isset($t['therapistId'])) {
+                            $tid = sanitize_text_field((string) $t['therapistId']);
+                        } elseif (isset($t['id'])) {
+                            $tid = sanitize_text_field((string) $t['id']);
+                        }
+                        if ($tid !== '') $ids[] = $tid;
+                    }
+                    $map[$service_id] = array_values(array_unique($ids));
+                }
+            }
+        }
+        return $map;
+    }
+
+    private function therapist_service_map() {
+        $services = function_exists('crm_get_cached_services') ? crm_get_cached_services() : [];
+        $map = [];
+        if (!is_array($services)) return $map;
+
+        foreach ($services as $s) {
+            if (!is_array($s)) continue;
+            $service_id = isset($s['id']) ? sanitize_text_field((string) $s['id']) : '';
+            $service_name = isset($s['serviceName']) ? sanitize_text_field((string) $s['serviceName']) : '';
+            if ($service_id === '' || $service_name === '') continue;
+            $therapists = isset($s['therapists']) && is_array($s['therapists']) ? $s['therapists'] : [];
+            foreach ($therapists as $t) {
+                if (!is_array($t)) continue;
+                $tid = '';
+                if (isset($t['therapistId'])) {
+                    $tid = sanitize_text_field((string) $t['therapistId']);
+                } elseif (isset($t['id'])) {
+                    $tid = sanitize_text_field((string) $t['id']);
+                }
+                if ($tid === '') continue;
+                if (!isset($map[$tid])) $map[$tid] = [];
+                $map[$tid][$service_id] = $service_name;
+            }
+        }
+        return $map;
     }
 
     private function resolve_therapist($therapists, $id_from_attr = '') {
@@ -218,9 +317,17 @@ class CRM_Booking_Flow_Shortcodes {
         $duration = !empty($data['duration']) ? sanitize_text_field($data['duration']) : '50';
         $session_type = !empty($data['session_type']) ? sanitize_text_field($data['session_type']) : 'online';
 
-        $services = $this->service_map();
+        $services = array_reverse($this->service_map(), true);
         if (empty($therapist_id)) wp_send_json(['ok' => false, 'message' => 'Therapist is required.']);
         if (!isset($services[$service_id])) wp_send_json(['ok' => false, 'message' => 'Invalid service selected.']);
+        $service_therapists = $this->service_therapist_map();
+        $therapist_services = $this->therapist_service_map();
+        if (array_key_exists($service_id, $service_therapists) && empty($service_therapists[$service_id])) {
+            wp_send_json(['ok' => false, 'message' => 'No therapists are available for this service.']);
+        }
+        if (!empty($service_therapists[$service_id]) && !in_array($therapist_id, $service_therapists[$service_id], true)) {
+            wp_send_json(['ok' => false, 'message' => 'Selected therapist is not available for this service.']);
+        }
         if (strlen($first) < 2 || strlen($last) < 2) wp_send_json(['ok' => false, 'message' => 'Enter valid first and last name.']);
         if (!is_email($email)) wp_send_json(['ok' => false, 'message' => 'Enter a valid email address.']);
         if (!empty($phone) && !preg_match('/^[0-9\+\-\s\(\)]{7,20}$/', $phone)) wp_send_json(['ok' => false, 'message' => 'Enter a valid phone number.']);
@@ -285,8 +392,11 @@ class CRM_Booking_Flow_Shortcodes {
         $therapist_id = !empty($selected_therapist['id']) ? $selected_therapist['id'] : '';
 
         $services = $this->service_map();
-        $default_service = isset($services[$atts['service_id']]) ? $atts['service_id'] : '50';
+        $service_ids = array_keys($services);
+        $fallback_service = !empty($service_ids) ? (string) $service_ids[0] : '50';
+        $default_service = isset($services[$atts['service_id']]) ? $atts['service_id'] : $fallback_service;
         $default_session_type = in_array($atts['session_type'], ['online', 'in-person'], true) ? $atts['session_type'] : 'online';
+        $service_therapists = $this->service_therapist_map();
 
         ob_start(); ?>
         <div class="crm-flow-booking">
@@ -294,7 +404,7 @@ class CRM_Booking_Flow_Shortcodes {
                 .crm-flow-booking{--bd:#00000014;--pr:#3e5640;--sf:#eaf7ea;background: linear-gradient(67.68deg, rgba(248, 235, 221, 0.6) 15%, #F2F7F2 100%);padding:50px 0;font-family:Inter,system-ui,sans-serif;color:#123029}
                 .crm-flow-wrap{max-width:1200px;margin:0 auto;padding:0 24px}.crm-flow-grid{display:grid;grid-template-columns:320px 1fr;gap:30px}
                 .crm-card{background:#fff;border:1px solid var(--bd);border-radius:10px}.crm-sidebar{padding:20px}.crm-sidebar h3{margin:0 0 14px}
-                .crm-service-list{display:flex;flex-direction:column;gap:8px}.crm-service-item{display:flex;align-items:center;padding:12px;border-radius:8px;border:1px solid transparent;cursor:pointer;background:#fff}
+                .crm-service-list{display:flex;flex-direction:column;gap:8px}.crm-service-item{text-align:left; display:flex;align-items:center;padding:12px;border-radius:8px;border:1px solid transparent;cursor:pointer;background:#fff}
                 .crm-service-item.active{background:var(--sf);border-color:var(--pr);color:var(--pr);font-weight:600}
                 .crm-main{padding:26px}.crm-head{border-bottom:1px solid var(--bd);padding-bottom:18px;margin-bottom:18px}.crm-title{font-size:28px;font-weight:700;margin:0 0 8px}.crm-sub{color:#6b7280;font-size:14px}
                 .crm-therapist-wrap{margin-bottom:16px}.crm-therapist-wrap label{display:block;font-size:13px;font-weight:600;margin-bottom:6px}
@@ -306,6 +416,12 @@ class CRM_Booking_Flow_Shortcodes {
                 .crm-day.available.active{background:var(--pr);border-color:var(--pr);color:#fff}
                 .crm-slots h4{margin:0 0 4px}.crm-slot-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}.crm-slot{padding:12px;border:1px solid var(--bd);border-radius:8px;background:#fff;cursor:pointer}.crm-slot.active{background:var(--pr);border-color:var(--pr);color:#fff}.crm-slot.disabled{opacity:.55;cursor:not-allowed}.crm-slot.booked{background:#fef2f2;border-color:#ef4444;color:#b91c1c;text-decoration:line-through}.crm-slot.recently-booked{box-shadow:0 0 0 2px #ef4444 inset}
                 .crm-foot{margin-top:24px;padding-top:16px;border-top:1px solid var(--bd);display:flex;justify-content:space-between;align-items:center;gap:16px}.crm-btn{background:var(--pr);color:#fff;border:none;border-radius:999px;padding:12px 22px;cursor:pointer}.crm-status{font-size:12px;color:#6b7280}
+                .crm-success-overlay{position:fixed;inset:0;background:rgba(15,23,42,.55);display:none;align-items:center;justify-content:center;padding:16px;z-index:99999}
+                .crm-success-overlay.open{display:flex}
+                .crm-success-card{background:#fff;max-width:420px;width:100%;border-radius:12px;padding:18px;border:1px solid var(--bd);text-align:center;box-shadow:0 20px 40px rgba(15,23,42,.18)}
+                .crm-success-card h4{margin:0 0 8px;font-size:20px}
+                .crm-success-card p{margin:0 0 14px;color:#475569;font-size:14px}
+                .crm-success-card button{background:var(--pr,#3e5640);color:#fff;border:none;border-radius:10px;padding:10px 16px;cursor:pointer}
                 .crm-step{display:none}.crm-step.active{display:block}.crm-d-grid{display:grid;grid-template-columns:1fr 340px;gap:20px}.crm-row2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
                 .crm-field{margin-bottom:14px}.crm-field label{display:block;font-size:13px;font-weight:600;margin-bottom:6px}.crm-input,.crm-textarea{width:100%;border:1px solid var(--bd);border-radius:8px;padding:11px}.crm-textarea{min-height:95px;resize:vertical}
                 .crm-divider{height:1px;background:var(--bd);margin:20px 0}.crm-check{display:flex;gap:8px;margin:10px 0;font-size:13px;color:#5a7069}
@@ -404,13 +520,22 @@ class CRM_Booking_Flow_Shortcodes {
                 </div>
             </div>
         </div>
+        <div class="crm-success-overlay" id="crm-success-overlay">
+            <div class="crm-success-card">
+                <h4>Appointment Confirmed</h4>
+                <p id="crm-success-message">Your appointment has been booked successfully.</p>
+                <button type="button" id="crm-success-ok">OK</button>
+            </div>
+        </div>
         <script>
             (function(){
                 const root=document.getElementById('crm-booking-root'); if(!root) return;
                 const services=<?php echo wp_json_encode($services); ?>;
+                const serviceTherapists=<?php echo wp_json_encode($service_therapists); ?>;
+                const therapistServices=<?php echo wp_json_encode($therapist_services); ?>;
                 const ajaxUrl=root.dataset.ajax;
                 const bookingNonce='<?php echo esc_js(wp_create_nonce('crm_public_booking_nonce')); ?>';
-                let therapistId=root.dataset.therapistId||'', serviceId=root.dataset.serviceId||'50', sessionType=root.dataset.sessionType||'online';
+                let therapistId=root.dataset.therapistId||'', serviceId=root.dataset.serviceId||'<?php echo esc_js($fallback_service); ?>', sessionType=root.dataset.sessionType||'online';
                 let viewDate=new Date(), selectedDate='', selectedTime='';
                 let recentlyBookedTime='';
                 let availabilityMap={};
@@ -428,6 +553,28 @@ class CRM_Booking_Flow_Shortcodes {
 
                 function validEmail(v){return /^\S+@\S+\.\S+$/.test(v);} function validPhone(v){return /^[0-9+\-\s()]{7,20}$/.test(v);}
                 function applyServiceActive(){document.querySelectorAll('.crm-service-item').forEach(x=>x.classList.toggle('active', x.dataset.service===serviceId));document.getElementById('crm-service-title').textContent=services[serviceId]||'Service';document.getElementById('crm-sum-service').textContent=services[serviceId]||'Service';}
+                function filterTherapists(){
+                    if(!therapistSelect) return;
+                    const hasMap=serviceTherapists && typeof serviceTherapists === 'object' && Object.prototype.hasOwnProperty.call(serviceTherapists, serviceId);
+                    const allowed=hasMap && Array.isArray(serviceTherapists[serviceId]) ? serviceTherapists[serviceId] : [];
+                    const hasFilter=hasMap;
+                    let keep=false;
+                    Array.from(therapistSelect.options).forEach(opt=>{
+                        if(!opt.value){opt.hidden=false; opt.disabled=false; return;}
+                        const ok=!hasFilter ? true : allowed.includes(opt.value);
+                        opt.hidden=!ok; opt.disabled=!ok;
+                        if(ok && opt.value===therapistId) keep=true;
+                    });
+                    if(hasFilter && !keep){
+                        therapistId='';
+                        therapistSelect.value='';
+                        selectedDate='';
+                        selectedTime='';
+                        dateTitle.textContent='Select a date';
+                        slotGrid.innerHTML=allowed.length ? '<div>Select an available highlighted day.</div>' : '<div>No therapists available for this service.</div>';
+                        updateSummary();
+                    }
+                }
                 function setFirstWeekday(){const d=new Date();while(d.getDay()===0||d.getDay()===6)d.setDate(d.getDate()+1);selectedDate=iso(d);viewDate=new Date(d.getFullYear(),d.getMonth(),1);}
 
                 function drawCal(){const y=viewDate.getFullYear(),m=viewDate.getMonth(); monthTitle.textContent=viewDate.toLocaleString(undefined,{month:'long',year:'numeric'}); cal.innerHTML=''; dayNames.forEach(n=>{const h=document.createElement('div');h.className='crm-day-head';h.textContent=n;cal.appendChild(h);}); const first=new Date(y,m,1).getDay(),daysIn=new Date(y,m+1,0).getDate(),prevDays=new Date(y,m,0).getDate(); for(let i=first-1;i>=0;i--){const d=document.createElement('div');d.className='crm-day disabled';d.textContent=String(prevDays-i);cal.appendChild(d);} for(let day=1;day<=daysIn;day++){const dt=new Date(y,m,day),key=iso(dt),weekday=dt.getDay(),b=document.createElement('button'); b.type='button';b.className='crm-day';b.textContent=day;b.dataset.iso=key; const isPast=key<todayIso; const isWeekend=(weekday===0||weekday===6); const isAvailable=!!availabilityMap[key]; if(availabilityLoaded && isAvailable)b.classList.add('available'); if(selectedDate===key)b.classList.add('active'); const canClick = availabilityLoaded && !isPast && !isWeekend && isAvailable; if(!canClick)b.classList.add('disabled'); b.onclick=()=>{if(!canClick)return;selectedDate=key;selectedTime='';drawCal();loadSlots();}; cal.appendChild(b);} const total=first+daysIn,tail=(7-(total%7))%7;for(let i=1;i<=tail;i++){const d=document.createElement('div');d.className='crm-day disabled';d.textContent=String(i);cal.appendChild(d);}}
@@ -455,23 +602,45 @@ class CRM_Booking_Flow_Shortcodes {
                 function updateSummary(){if(!selectedDate||!selectedTime){summary.textContent='No time selected';return;} const nice=new Date(selectedDate+'T00:00:00').toLocaleDateString(undefined,{weekday:'long',month:'long',day:'numeric'}); summary.textContent=`${nice} at ${selectedTime}`;}
                 function openDetails(){if(!therapistId){alert('Please select a therapist first.');return;} if(!services[serviceId]){alert('Please select a valid service.');return;} if(!selectedDate||!selectedTime){alert('Please select a date and time first.');return;} if(selectedDate<todayIso){alert('Past dates are not allowed.');return;} stepCalendar.classList.remove('active'); stepDetails.classList.add('active'); const opt=therapistSelect.options[therapistSelect.selectedIndex]; document.getElementById('crm-sum-therapist').textContent=opt?opt.textContent.trim():'-'; const nice=new Date(selectedDate+'T00:00:00').toLocaleDateString(undefined,{weekday:'short',month:'short',day:'numeric'}); document.getElementById('crm-sum-dt').textContent=`${nice}, ${selectedTime}`; const sSel=document.getElementById('crm-session-type'); sSel.value=sessionType; document.getElementById('crm-sum-loc').textContent=sSel.value==='in-person'?'In-Person':'Online (Video)';}
                 function closeDetails(e){if(e)e.preventDefault(); stepDetails.classList.remove('active'); stepCalendar.classList.add('active');}
-                function submitBooking(){const msg=document.getElementById('crm-msg'),btn=document.getElementById('crm-confirm-btn'); if(!document.getElementById('crm-consent-privacy').checked||!document.getElementById('crm-consent-ohip').checked){msg.style.color='#dc2626';msg.textContent='Please accept both consent checkboxes.';return;} const first=document.getElementById('crm-first-name').value.trim(),last=document.getElementById('crm-last-name').value.trim(),email=document.getElementById('crm-email').value.trim(),phone=document.getElementById('crm-phone').value.trim(),reason=document.getElementById('crm-reason').value.trim(); if(first.length<2||last.length<2){msg.style.color='#dc2626';msg.textContent='Enter valid first and last name.';return;} if(!validEmail(email)){msg.style.color='#dc2626';msg.textContent='Enter a valid email address.';return;} if(phone && !validPhone(phone)){msg.style.color='#dc2626';msg.textContent='Enter a valid phone number.';return;} if(reason.length>1000){msg.style.color='#dc2626';msg.textContent='Reason is too long.';return;} if(!therapistId||!services[serviceId]||!selectedDate||!selectedTime){msg.style.color='#dc2626';msg.textContent='Incomplete booking selection.';return;} const sSel=document.getElementById('crm-session-type'); if(!['online','in-person'].includes(sSel.value)){msg.style.color='#dc2626';msg.textContent='Invalid appointment type.';return;} btn.disabled=true; btn.textContent='Confirming...'; msg.textContent=''; const slotBody=new URLSearchParams(); slotBody.append('action','crm_booking_flow_slots'); slotBody.append('nonce',bookingNonce); slotBody.append('therapist_id',therapistId); slotBody.append('date',selectedDate); slotBody.append('session_type',sSel.value||'online'); fetch(ajaxUrl,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded; charset=UTF-8'},body:slotBody.toString()}).then(r=>r.json()).then(slotRes=>{const live=normalizeSlots((slotRes&&Array.isArray(slotRes.slots))?slotRes.slots:[]); const stillAvailable=live.some(x=>x.time.toLowerCase()===String(selectedTime).toLowerCase() && x.available); if(!stillAvailable){recentlyBookedTime=selectedTime; selectedTime=''; updateSummary(); stepDetails.classList.remove('active'); stepCalendar.classList.add('active'); renderSlots(live); status.style.color='#dc2626'; status.textContent='This time slot is no longer available. Please select another highlighted time.'; msg.style.color='#dc2626'; msg.textContent='This time slot is no longer available. Please select another highlighted time.'; btn.disabled=false; btn.textContent='Confirm Appointment'; return null;} const body=new URLSearchParams(); body.append('action','crm_booking_flow_submit'); body.append('nonce',bookingNonce); body.append('booking_data[first_name]',first); body.append('booking_data[last_name]',last); body.append('booking_data[email]',email); body.append('booking_data[phone]',phone); body.append('booking_data[reason]',reason); body.append('booking_data[therapist_id]',therapistId); body.append('booking_data[service_id]',serviceId); body.append('booking_data[session_date]',selectedDate); body.append('booking_data[session_time]',selectedTime); body.append('booking_data[duration]','50'); body.append('booking_data[session_type]',sSel.value||'online'); return fetch(ajaxUrl,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded; charset=UTF-8'},body:body.toString()}).then(r=>r.json());}).then(res=>{if(!res)return; if(res&&res.ok){msg.style.color='#16a34a';msg.textContent='Appointment confirmed successfully.'+(res.appointment&&res.appointment.id?(' ID: '+res.appointment.id):'');}else{const serverMsg=(res&&res.message)?String(res.message):'Booking failed.'; msg.style.color='#dc2626'; msg.textContent=serverMsg; const lower=serverMsg.toLowerCase(); if(lower.includes('no longer available')||lower.includes('select another time')||lower.includes('not available')){recentlyBookedTime=selectedTime; selectedTime=''; updateSummary(); stepDetails.classList.remove('active'); stepCalendar.classList.add('active'); status.style.color='#dc2626'; status.textContent='That slot was just booked. Please choose another highlighted time.'; loadSlots();}}}).catch(()=>{msg.style.color='#dc2626';msg.textContent='Booking API unavailable right now.';}).finally(()=>{btn.disabled=false;btn.textContent='Confirm Appointment';});}
+                function showSuccessPopup(message){
+                    const overlay=document.getElementById('crm-success-overlay');
+                    const msgEl=document.getElementById('crm-success-message');
+                    if(msgEl) msgEl.textContent=message;
+                    if(overlay) overlay.classList.add('open');
+                }
+                function submitBooking(){const msg=document.getElementById('crm-msg'),btn=document.getElementById('crm-confirm-btn'); if(!document.getElementById('crm-consent-privacy').checked||!document.getElementById('crm-consent-ohip').checked){msg.style.color='#dc2626';msg.textContent='Please accept both consent checkboxes.';return;} const first=document.getElementById('crm-first-name').value.trim(),last=document.getElementById('crm-last-name').value.trim(),email=document.getElementById('crm-email').value.trim(),phone=document.getElementById('crm-phone').value.trim(),reason=document.getElementById('crm-reason').value.trim(); if(first.length<2||last.length<2){msg.style.color='#dc2626';msg.textContent='Enter valid first and last name.';return;} if(!validEmail(email)){msg.style.color='#dc2626';msg.textContent='Enter a valid email address.';return;} if(phone && !validPhone(phone)){msg.style.color='#dc2626';msg.textContent='Enter a valid phone number.';return;} if(reason.length>1000){msg.style.color='#dc2626';msg.textContent='Reason is too long.';return;} if(!therapistId||!services[serviceId]||!selectedDate||!selectedTime){msg.style.color='#dc2626';msg.textContent='Incomplete booking selection.';return;} const sSel=document.getElementById('crm-session-type'); if(!['online','in-person'].includes(sSel.value)){msg.style.color='#dc2626';msg.textContent='Invalid appointment type.';return;} btn.disabled=true; btn.textContent='Confirming...'; msg.textContent=''; const slotBody=new URLSearchParams(); slotBody.append('action','crm_booking_flow_slots'); slotBody.append('nonce',bookingNonce); slotBody.append('therapist_id',therapistId); slotBody.append('date',selectedDate); slotBody.append('session_type',sSel.value||'online'); fetch(ajaxUrl,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded; charset=UTF-8'},body:slotBody.toString()}).then(r=>r.json()).then(slotRes=>{const live=normalizeSlots((slotRes&&Array.isArray(slotRes.slots))?slotRes.slots:[]); const stillAvailable=live.some(x=>x.time.toLowerCase()===String(selectedTime).toLowerCase() && x.available); if(!stillAvailable){recentlyBookedTime=selectedTime; selectedTime=''; updateSummary(); stepDetails.classList.remove('active'); stepCalendar.classList.add('active'); renderSlots(live); status.style.color='#dc2626'; status.textContent='This time slot is no longer available. Please select another highlighted time.'; msg.style.color='#dc2626'; msg.textContent='This time slot is no longer available. Please select another highlighted time.'; btn.disabled=false; btn.textContent='Confirm Appointment'; return null;} const body=new URLSearchParams(); body.append('action','crm_booking_flow_submit'); body.append('nonce',bookingNonce); body.append('booking_data[first_name]',first); body.append('booking_data[last_name]',last); body.append('booking_data[email]',email); body.append('booking_data[phone]',phone); body.append('booking_data[reason]',reason); body.append('booking_data[therapist_id]',therapistId); body.append('booking_data[service_id]',serviceId); body.append('booking_data[session_date]',selectedDate); body.append('booking_data[session_time]',selectedTime); body.append('booking_data[duration]','50'); body.append('booking_data[session_type]',sSel.value||'online'); return fetch(ajaxUrl,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded; charset=UTF-8'},body:body.toString()}).then(r=>r.json());}).then(res=>{if(!res)return; if(res&&res.ok){const id=(res.appointment&&res.appointment.id)?(' ID: '+res.appointment.id):''; showSuccessPopup('Appointment confirmed successfully.'+id); return;} else {const serverMsg=(res&&res.message)?String(res.message):'Booking failed.'; msg.style.color='#dc2626'; msg.textContent=serverMsg; const lower=serverMsg.toLowerCase(); if(lower.includes('no longer available')||lower.includes('select another time')||lower.includes('not available')){recentlyBookedTime=selectedTime; selectedTime=''; updateSummary(); stepDetails.classList.remove('active'); stepCalendar.classList.add('active'); status.style.color='#dc2626'; status.textContent='That slot was just booked. Please choose another highlighted time.'; loadSlots();}}}).catch(()=>{msg.style.color='#dc2626';msg.textContent='Booking API unavailable right now.';}).finally(()=>{btn.disabled=false;btn.textContent='Confirm Appointment';});}
 
-                document.getElementById('crm-prev').onclick=()=>{viewDate=new Date(viewDate.getFullYear(),viewDate.getMonth()-1,1);scheduleMonthAvailability();};
-                document.getElementById('crm-next').onclick=()=>{viewDate=new Date(viewDate.getFullYear(),viewDate.getMonth()+1,1);scheduleMonthAvailability();};
-                document.getElementById('crm-continue-btn').onclick=openDetails;
-                document.getElementById('crm-back-calendar').onclick=closeDetails;
-                document.getElementById('crm-confirm-btn').onclick=submitBooking;
-                document.getElementById('crm-service-list').addEventListener('click',e=>{const b=e.target.closest('.crm-service-item'); if(!b) return; serviceId=b.dataset.service; localStorage.setItem(serviceStorageKey, serviceId); applyServiceActive();});
-                therapistSelect.addEventListener('change',()=>{therapistId=therapistSelect.value||''; selectedDate=''; selectedTime=''; dateTitle.textContent='Select a date'; slotGrid.innerHTML='<div>Select an available highlighted day.</div>'; updateSummary(); scheduleMonthAvailability();});
-                document.getElementById('crm-session-type').addEventListener('change',function(){sessionType=this.value; document.getElementById('crm-sum-loc').textContent=this.value==='in-person'?'In-Person':'Online (Video)'; if(stepCalendar.classList.contains('active')){selectedDate=''; selectedTime=''; dateTitle.textContent='Select a date'; slotGrid.innerHTML='<div>Select an available highlighted day.</div>'; updateSummary(); scheduleMonthAvailability();}});
+                const prevBtn=document.getElementById('crm-prev');
+                const nextBtn=document.getElementById('crm-next');
+                const continueBtn=document.getElementById('crm-continue-btn');
+                const backBtn=document.getElementById('crm-back-calendar');
+                const confirmBtn=document.getElementById('crm-confirm-btn');
+                const serviceList=document.getElementById('crm-service-list');
+                const sessionTypeSelect=document.getElementById('crm-session-type');
+                const successOk=document.getElementById('crm-success-ok');
+
+                if(prevBtn) prevBtn.onclick=()=>{viewDate=new Date(viewDate.getFullYear(),viewDate.getMonth()-1,1);scheduleMonthAvailability();};
+                if(nextBtn) nextBtn.onclick=()=>{viewDate=new Date(viewDate.getFullYear(),viewDate.getMonth()+1,1);scheduleMonthAvailability();};
+                if(continueBtn) continueBtn.onclick=openDetails;
+                if(backBtn) backBtn.onclick=closeDetails;
+                if(confirmBtn) confirmBtn.onclick=submitBooking;
+                if(successOk) successOk.onclick=()=>{window.location.reload();};
+                if(serviceList) serviceList.addEventListener('click',e=>{const b=e.target.closest('.crm-service-item'); if(!b) return; serviceId=b.dataset.service; localStorage.setItem(serviceStorageKey, serviceId); applyServiceActive(); filterTherapists(); selectedDate=''; selectedTime=''; dateTitle.textContent='Select a date'; slotGrid.innerHTML='<div>Select an available highlighted day.</div>'; updateSummary(); scheduleMonthAvailability();});
+                if(therapistSelect) therapistSelect.addEventListener('change',()=>{therapistId=therapistSelect.value||''; selectedDate=''; selectedTime=''; dateTitle.textContent='Select a date'; slotGrid.innerHTML='<div>Select an available highlighted day.</div>'; updateSummary(); scheduleMonthAvailability();});
+                if(sessionTypeSelect) sessionTypeSelect.addEventListener('change',function(){sessionType=this.value; const loc=document.getElementById('crm-sum-loc'); if(loc) loc.textContent=this.value==='in-person'?'In-Person':'Online (Video)'; if(stepCalendar.classList.contains('active')){selectedDate=''; selectedTime=''; dateTitle.textContent='Select a date'; slotGrid.innerHTML='<div>Select an available highlighted day.</div>'; updateSummary(); scheduleMonthAvailability();}});
 
                 let storedService='';
                 try { storedService=localStorage.getItem(serviceStorageKey); } catch(e) { storedService=''; }
-                if(storedService && services[storedService]) serviceId=storedService; else serviceId='50';
+                if(storedService && services[storedService]) serviceId=storedService;
+                if(!services[serviceId]){const firstService=Object.keys(services)[0]; if(firstService) serviceId=firstService;}
+                if(!serviceId) serviceId='<?php echo esc_js($fallback_service); ?>';
+                const activeBtn=document.querySelector('.crm-service-item.active');
+                if(activeBtn && activeBtn.dataset.service && services[activeBtn.dataset.service]) serviceId=activeBtn.dataset.service;
                 applyServiceActive();
                 if(therapistId) therapistSelect.value=therapistId;
+                filterTherapists();
                 setFirstWeekday(); drawCal(); updateSummary(); scheduleMonthAvailability(); if(therapistId) loadSlots(); else slotGrid.innerHTML='<div>Select therapist and date.</div>';
+                setTimeout(()=>{if(cal && !cal.children.length){drawCal();}}, 50);
             })();
         </script>
         <?php
