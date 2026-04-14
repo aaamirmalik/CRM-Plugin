@@ -77,16 +77,17 @@ class CRM_API_Handler {
         $session_time = isset($payload['sessionTime']) ? sanitize_text_field((string) $payload['sessionTime']) : '';
         $session_start_utc = isset($payload['sessionStartUtc']) ? sanitize_text_field((string) $payload['sessionStartUtc']) : '';
 
-        // Normalize date of birth/phone keys for broad API compatibility.
+        // Normalize phone to a single canonical key.
         $phone = isset($payload['phone']) ? sanitize_text_field((string) $payload['phone']) : '';
         if ($phone === '' && isset($payload['clientPhone'])) {
             $phone = sanitize_text_field((string) $payload['clientPhone']);
         }
         if ($phone !== '') {
             $payload['phone'] = $phone;
-            $payload['clientPhone'] = $phone;
         }
+        unset($payload['clientPhone']);
 
+        // Normalize DOB to the CRM-required canonical key: dob (YYYY-MM-DD).
         $date_of_birth = '';
         foreach (['dateOfBirth', 'date_of_birth', 'dob', 'birthDate', 'birth_date'] as $dob_key) {
             if (!empty($payload[$dob_key])) {
@@ -94,14 +95,12 @@ class CRM_API_Handler {
                 break;
             }
         }
+        unset($payload['dateOfBirth'], $payload['date_of_birth'], $payload['birthDate'], $payload['birth_date']);
+        unset($payload['dob']);
         if ($date_of_birth !== '') {
             $dt = DateTime::createFromFormat('Y-m-d', $date_of_birth);
             if ($dt && $dt->format('Y-m-d') === $date_of_birth) {
-                $payload['dateOfBirth'] = $date_of_birth;
-                $payload['date_of_birth'] = $date_of_birth;
                 $payload['dob'] = $date_of_birth;
-                $payload['birthDate'] = $date_of_birth;
-                $payload['birth_date'] = $date_of_birth;
             }
         }
 
