@@ -1043,12 +1043,12 @@ class CRM_Connector_Core {
             $notes = sanitize_textarea_field((string) $data['reason']);
         }
         $phone = isset($data['phone']) ? sanitize_text_field((string) $data['phone']) : '';
-        $date_of_birth = isset($data['dateOfBirth']) ? sanitize_text_field((string) $data['dateOfBirth']) : '';
+        $date_of_birth = isset($data['dob']) ? sanitize_text_field((string) $data['dob']) : '';
+        if ($date_of_birth === '' && isset($data['dateOfBirth'])) {
+            $date_of_birth = sanitize_text_field((string) $data['dateOfBirth']);
+        }
         if ($date_of_birth === '' && isset($data['date_of_birth'])) {
             $date_of_birth = sanitize_text_field((string) $data['date_of_birth']);
-        }
-        if ($date_of_birth === '' && isset($data['dob'])) {
-            $date_of_birth = sanitize_text_field((string) $data['dob']);
         }
         $room = isset($data['room']) ? sanitize_text_field((string) $data['room']) : '';
         if ($room === '' && isset($data['room_id'])) {
@@ -1130,7 +1130,10 @@ class CRM_Connector_Core {
             'notes' => $notes,
         ];
         if ($phone !== '') $payload['phone'] = $phone;
-        if ($date_of_birth !== '') $payload['dateOfBirth'] = $date_of_birth;
+        if ($date_of_birth !== '') {
+            $payload['dob'] = $date_of_birth;
+            $payload['dateOfBirth'] = $date_of_birth;
+        }
         if ($room !== '') $payload['room'] = $room;
         if ($is_zoom) $payload['isZoom'] = true;
 

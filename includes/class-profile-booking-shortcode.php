@@ -420,7 +420,13 @@ private function extract_bio_sections($text) {
         $data = isset($_POST['booking_data']) && is_array($_POST['booking_data']) ? $_POST['booking_data'] : [];
         $email = !empty($data['email']) ? sanitize_email($data['email']) : '';
         $phone = !empty($data['phone']) ? sanitize_text_field($data['phone']) : '';
-        $date_of_birth = !empty($data['dateOfBirth']) ? sanitize_text_field($data['dateOfBirth']) : '';
+        $date_of_birth = !empty($data['dob']) ? sanitize_text_field($data['dob']) : '';
+        if ($date_of_birth === '') {
+            $date_of_birth = !empty($data['dateOfBirth']) ? sanitize_text_field($data['dateOfBirth']) : '';
+        }
+        if ($date_of_birth === '' && !empty($data['date_of_birth'])) {
+            $date_of_birth = sanitize_text_field($data['date_of_birth']);
+        }
         $notes = !empty($data['notes']) ? sanitize_textarea_field($data['notes']) : 'Booked via profile widget';
         if (!is_email($email)) {
             wp_send_json(['ok' => false, 'message' => 'A valid email is required.', 'used_fallback' => false]);
@@ -454,6 +460,7 @@ private function extract_bio_sections($text) {
             $payload['phone'] = $phone;
         }
         if ($date_of_birth !== '') {
+            $payload['dob'] = $date_of_birth;
             $payload['dateOfBirth'] = $date_of_birth;
         }
         if (empty($payload['therapistId']) || empty($payload['sessionDate']) || empty($payload['sessionTime'])) {
@@ -737,7 +744,7 @@ private function extract_bio_sections($text) {
                     body.append('booking_data[fullName]',fullName);
                     body.append('booking_data[email]',email);
                     body.append('booking_data[phone]',phone);
-                    body.append('booking_data[dateOfBirth]',dateOfBirth);
+                    body.append('booking_data[dob]',dateOfBirth);
                     body.append('booking_data[notes]',notes);
                     body.append('booking_data[therapistId]',therapistId);
                     body.append('booking_data[serviceId]',serviceId);
