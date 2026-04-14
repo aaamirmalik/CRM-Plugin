@@ -7,6 +7,57 @@ class CRM_API_Handler {
     private $last_error = '';
     private static $runtime_cache = [];
 
+    private function extract_api_error_message($result, $code = 0) {
+        if (!is_array($result)) {
+            return $code ? ('CRM booking API returned HTTP ' . (int) $code . '.') : 'CRM booking API request failed.';
+        }
+
+        $message = '';
+        if (!empty($result['message']) && is_string($result['message'])) {
+            $message = sanitize_text_field((string) $result['message']);
+        } elseif (!empty($result['error']) && is_string($result['error'])) {
+            $message = sanitize_text_field((string) $result['error']);
+        }
+
+        $details = [];
+        if (!empty($result['errors']) && is_array($result['errors'])) {
+            foreach ($result['errors'] as $field => $field_errors) {
+                if (is_string($field_errors) && trim($field_errors) !== '') {
+                    $details[] = is_string($field) ? ($field . ': ' . $field_errors) : $field_errors;
+                    continue;
+                }
+                if (is_array($field_errors)) {
+                    foreach ($field_errors as $item) {
+                        if (is_string($item) && trim($item) !== '') {
+                            $details[] = is_string($field) ? ($field . ': ' . $item) : $item;
+                        }
+                    }
+                }
+            }
+        }
+
+        if ($message === '' && !empty($details)) {
+            $message = sanitize_text_field((string) $details[0]);
+        }
+        if ($message === '' && $code) {
+            $message = 'CRM booking API returned HTTP ' . (int) $code . '.';
+        }
+        if ($message === '') {
+            $message = 'CRM booking request failed.';
+        }
+
+        if (!empty($details)) {
+            $unique_details = array_values(array_unique(array_map('sanitize_text_field', $details)));
+            $first_three = array_slice($unique_details, 0, 3);
+            $detail_text = implode(' | ', $first_three);
+            if ($detail_text !== '' && stripos($message, $detail_text) === false) {
+                $message .= ' (' . $detail_text . ')';
+            }
+        }
+
+        return $message;
+    }
+
     public function get_last_error() {
         return (string) $this->last_error;
     }
@@ -462,45 +513,76 @@ class CRM_API_Handler {
         $url = $this->base_url . '/public/book-appointment';
         
         $payload = $this->normalize_booking_payload($data);
+        $attempt_booking = function($booking_payload) use ($url) {
+            $response = wp_remote_post($url, [
+                'method'    => 'POST',
+                'timeout'   => 30,
+                'sslverify' => true,
+                'headers'   => [
+                    'Content-Type' => 'application/json',
+                    'Accept'       => 'application/json',
+                    'User-Agent'   => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/121.0.0.0'
+                ],
+                'body'      => wp_json_encode($booking_payload),
+            ]);
 
-        $response = wp_remote_post($url, [
-            'method'    => 'POST',
-            'timeout'   => 30,
-            'sslverify' => true,
-            'headers'   => [
-                'Content-Type' => 'application/json',
-                'Accept'       => 'application/json',
-                'User-Agent'   => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/121.0.0.0'
-            ],
-            'body'      => wp_json_encode($payload),
-        ]);
+            if (is_wp_error($response)) {
+                return [
+                    'transport_error' => $response->get_error_message(),
+                    'code' => 0,
+                    'body' => '',
+                    'result' => null,
+                ];
+            }
 
-        if (is_wp_error($response)) {
-            $this->set_last_error('CRM booking API request failed: ' . $response->get_error_message());
-            error_log('CRM API Booking Post Error: ' . $response->get_error_message());
+            $code = wp_remote_retrieve_response_code($response);
+            $body = wp_remote_retrieve_body($response);
+            $result = json_decode($body, true);
+
+            return [
+                'transport_error' => '',
+                'code' => (int) $code,
+                'body' => (string) $body,
+                'result' => is_array($result) ? $result : null,
+            ];
+        };
+
+        $attempt = $attempt_booking($payload);
+        if ($attempt['transport_error'] !== '') {
+            $this->set_last_error('CRM booking API request failed: ' . $attempt['transport_error']);
+            error_log('CRM API Booking Post Error: ' . $attempt['transport_error']);
             return false;
         }
 
-        $code = wp_remote_retrieve_response_code($response);
-        $body = wp_remote_retrieve_body($response);
-        $result = json_decode($body, true);
+        $code = (int) $attempt['code'];
+        $body = (string) $attempt['body'];
+        $result = $attempt['result'];
         if (!is_array($result)) {
             $plain = trim((string) $body);
             $this->set_last_error($plain !== '' ? $plain : 'CRM booking API returned invalid JSON.');
             return false;
         }
-        if ($code < 200 || $code >= 300) {
-            $api_message = '';
-            if (!empty($result['message'])) {
-                $api_message = sanitize_text_field((string) $result['message']);
-            } elseif (!empty($result['error'])) {
-                $api_message = sanitize_text_field((string) $result['error']);
-            } elseif (!empty($result['errors']) && is_array($result['errors'])) {
-                $first = reset($result['errors']);
-                if (is_string($first)) $api_message = sanitize_text_field($first);
+
+        // Fallback retry: if CRM rejects dateOfBirth with a generic invalid request,
+        // retry once using dob key only for DOB compatibility.
+        if (($code < 200 || $code >= 300) && isset($payload['dateOfBirth'])) {
+            $msg = $this->extract_api_error_message($result, $code);
+            if (stripos($msg, 'invalid request data') !== false) {
+                $retry_payload = $payload;
+                $retry_payload['dob'] = $retry_payload['dateOfBirth'];
+                unset($retry_payload['dateOfBirth']);
+                $retry_attempt = $attempt_booking($retry_payload);
+                if ($retry_attempt['transport_error'] === '' && is_array($retry_attempt['result'])) {
+                    $payload = $retry_payload;
+                    $code = (int) $retry_attempt['code'];
+                    $body = (string) $retry_attempt['body'];
+                    $result = $retry_attempt['result'];
+                }
             }
-            if ($api_message === '') $api_message = 'CRM booking API returned HTTP ' . $code . '.';
-            $this->set_last_error($api_message);
+        }
+
+        if ($code < 200 || $code >= 300) {
+            $this->set_last_error($this->extract_api_error_message($result, $code));
         }
 
         // --- Logic to update dynamic appointment count ---
