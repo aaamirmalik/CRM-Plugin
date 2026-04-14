@@ -621,6 +621,8 @@ class CRM_API_Handler {
                 $retry_payloads = [];
 
                 if ($dob_raw !== '') {
+                    $dob_slash = str_replace('-', '/', $dob_raw);
+
                     // Variant 1: send dob instead of dateOfBirth.
                     $variant_dob_key = $payload;
                     $variant_dob_key['dob'] = $dob_raw;
@@ -637,9 +639,20 @@ class CRM_API_Handler {
                     $variant_dob_key_iso['dob'] = $dob_raw . 'T00:00:00.000Z';
                     unset($variant_dob_key_iso['dateOfBirth']);
                     $retry_payloads[] = $variant_dob_key_iso;
+
+                    // Variant 4: slash DOB format (in case upstream regex is misconfigured).
+                    $variant_dob_slash = $payload;
+                    $variant_dob_slash['dateOfBirth'] = $dob_slash;
+                    $retry_payloads[] = $variant_dob_slash;
+
+                    // Variant 5: slash DOB with dob key.
+                    $variant_dob_key_slash = $payload;
+                    $variant_dob_key_slash['dob'] = $dob_slash;
+                    unset($variant_dob_key_slash['dateOfBirth']);
+                    $retry_payloads[] = $variant_dob_key_slash;
                 }
 
-                // Variant 4: remove sessionStartUtc and rely on sessionDate/sessionTime only.
+                // Variant 6: remove sessionStartUtc and rely on sessionDate/sessionTime only.
                 $variant_no_start = $payload;
                 unset($variant_no_start['sessionStartUtc']);
                 $retry_payloads[] = $variant_no_start;
