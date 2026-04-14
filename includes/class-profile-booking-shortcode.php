@@ -744,7 +744,7 @@ private function extract_bio_sections($text) {
                     body.append('booking_data[fullName]',fullName);
                     body.append('booking_data[email]',email);
                     body.append('booking_data[phone]',phone);
-                    body.append('booking_data[dob]',dateOfBirth);
+                    body.append('booking_data[dateOfBirth]',dateOfBirth);
                     body.append('booking_data[notes]',notes);
                     body.append('booking_data[therapistId]',therapistId);
                     body.append('booking_data[serviceId]',serviceId);
