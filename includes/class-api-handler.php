@@ -87,7 +87,7 @@ class CRM_API_Handler {
         }
         unset($payload['clientPhone']);
 
-        // Normalize DOB to the CRM-required canonical key: dob (YYYY-MM-DD).
+        // Normalize DOB from incoming aliases and map to CRM canonical key.
         $date_of_birth = '';
         foreach (['dateOfBirth', 'date_of_birth', 'dob', 'birthDate', 'birth_date'] as $dob_key) {
             if (!empty($payload[$dob_key])) {
@@ -100,7 +100,7 @@ class CRM_API_Handler {
         if ($date_of_birth !== '') {
             $dt = DateTime::createFromFormat('Y-m-d', $date_of_birth);
             if ($dt && $dt->format('Y-m-d') === $date_of_birth) {
-                $payload['dob'] = $date_of_birth;
+                $payload['dateOfBirth'] = $date_of_birth;
             }
         }
 
