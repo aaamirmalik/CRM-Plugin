@@ -489,7 +489,12 @@ private function extract_bio_sections($text) {
         $message = is_array($result) && !empty($result['message'])
             ? sanitize_text_field($result['message'])
             : ($booking_error !== '' ? $booking_error : 'Booking could not be completed.');
-        wp_send_json(['ok' => false, 'message' => $message, 'used_fallback' => false], 502);
+        wp_send_json([
+            'ok' => false,
+            'message' => $message,
+            'used_fallback' => false,
+            'debug' => $api->get_last_debug(),
+        ], 502);
     }
 
     public function render_shortcode($atts) {
@@ -753,7 +758,7 @@ private function extract_bio_sections($text) {
                     body.append('booking_data[sessionType]',sessionTypeInput.value||sessionType);
                     body.append('booking_data[duration]','50');
                     body.append('nonce',bookingNonce);
-                    getRecaptchaToken('profile_continue_booking',modal).then(token=>{body.append('recaptcha_token',token); return fetch(ajaxUrl,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded; charset=UTF-8'},body:body.toString()}).then(r=>r.json());}).then(res=>{if(res&&res.ok&&res.appointment&&res.appointment.id){const id=' ID: '+res.appointment.id; showSuccessPopup('Appointment confirmed successfully.'+id); return;}else{const msg=(res&&res.message)?res.message:'Booking failed.';if(modalMessage){modalMessage.style.color='#dc2626';modalMessage.textContent=msg;}status.style.color='#dc2626';status.textContent=msg;}})
+                    getRecaptchaToken('profile_continue_booking',modal).then(token=>{body.append('recaptcha_token',token); return fetch(ajaxUrl,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded; charset=UTF-8'},body:body.toString()}).then(r=>r.json());}).then(res=>{if(res&&res.ok&&res.appointment&&res.appointment.id){const id=' ID: '+res.appointment.id; showSuccessPopup('Appointment confirmed successfully.'+id); return;}else{const msg=(res&&res.message)?res.message:'Booking failed.';if(res&&res.debug&&window.console){console.error('CRM booking debug:',res.debug);}if(modalMessage){modalMessage.style.color='#dc2626';modalMessage.textContent=msg;}status.style.color='#dc2626';status.textContent=msg;}})
                     .catch(()=>{if(modalMessage){modalMessage.style.color='#dc2626';modalMessage.textContent='Security check failed. Please refresh and try again.';}status.style.color='#dc2626';status.textContent='Security check failed. Please refresh and try again.';}).finally(()=>{submitBookingBtn.disabled=false;submitBookingBtn.textContent='Confirm Appointment';});
                 }
                 if(serviceSelect){

@@ -5,6 +5,7 @@ class CRM_API_Handler {
     // The base URL for the TherapyFlow API
     private $base_url = "https://demo.therapyflow.pro/api";
     private $last_error = '';
+    private $last_debug = [];
     private static $runtime_cache = [];
 
     private function extract_api_error_message($result, $code = 0) {
@@ -62,6 +63,10 @@ class CRM_API_Handler {
         return (string) $this->last_error;
     }
 
+    public function get_last_debug() {
+        return is_array($this->last_debug) ? $this->last_debug : [];
+    }
+
     public function __construct() {
         $saved_url = trim((string) get_option('crm_api_base_url', 'https://demo.therapyflow.pro/api'));
         if ($saved_url !== '') {
@@ -74,10 +79,30 @@ class CRM_API_Handler {
 
     private function clear_last_error() {
         $this->last_error = '';
+        $this->last_debug = [];
     }
 
     private function set_last_error($message) {
         $this->last_error = sanitize_text_field((string) $message);
+    }
+
+    private function summarize_booking_payload_for_debug($payload) {
+        $p = is_array($payload) ? $payload : [];
+        return [
+            'keys' => array_values(array_keys($p)),
+            'therapistId' => isset($p['therapistId']) ? sanitize_text_field((string) $p['therapistId']) : '',
+            'serviceId' => isset($p['serviceId']) ? sanitize_text_field((string) $p['serviceId']) : '',
+            'sessionDate' => isset($p['sessionDate']) ? sanitize_text_field((string) $p['sessionDate']) : '',
+            'sessionTime' => isset($p['sessionTime']) ? sanitize_text_field((string) $p['sessionTime']) : '',
+            'sessionType' => isset($p['sessionType']) ? sanitize_text_field((string) $p['sessionType']) : '',
+            'duration' => isset($p['duration']) ? sanitize_text_field((string) $p['duration']) : '',
+            'hasDateOfBirth' => isset($p['dateOfBirth']) && (string) $p['dateOfBirth'] !== '',
+            'hasDob' => isset($p['dob']) && (string) $p['dob'] !== '',
+            'dateOfBirth' => isset($p['dateOfBirth']) ? sanitize_text_field((string) $p['dateOfBirth']) : '',
+            'dob' => isset($p['dob']) ? sanitize_text_field((string) $p['dob']) : '',
+            'hasSessionStartUtc' => isset($p['sessionStartUtc']) && (string) $p['sessionStartUtc'] !== '',
+            'sessionStartUtc' => isset($p['sessionStartUtc']) ? sanitize_text_field((string) $p['sessionStartUtc']) : '',
+        ];
     }
 
     private function cache_key($namespace, $parts = []) {
@@ -513,6 +538,7 @@ class CRM_API_Handler {
         $url = $this->base_url . '/public/book-appointment';
         
         $payload = $this->normalize_booking_payload($data);
+        $debug_attempts = [];
         $attempt_booking = function($booking_payload) use ($url) {
             $response = wp_remote_post($url, [
                 'method'    => 'POST',
@@ -547,10 +573,34 @@ class CRM_API_Handler {
             ];
         };
 
+        $push_debug_attempt = function($label, $booking_payload, $attempt_data) use (&$debug_attempts) {
+            $response_message = '';
+            if (is_array($attempt_data['result'])) {
+                if (!empty($attempt_data['result']['message']) && is_string($attempt_data['result']['message'])) {
+                    $response_message = sanitize_text_field((string) $attempt_data['result']['message']);
+                } elseif (!empty($attempt_data['result']['error']) && is_string($attempt_data['result']['error'])) {
+                    $response_message = sanitize_text_field((string) $attempt_data['result']['error']);
+                }
+            }
+            $debug_attempts[] = [
+                'label' => $label,
+                'request' => $this->summarize_booking_payload_for_debug($booking_payload),
+                'transportError' => sanitize_text_field((string) $attempt_data['transport_error']),
+                'statusCode' => (int) $attempt_data['code'],
+                'responseMessage' => $response_message,
+                'responseBodyExcerpt' => sanitize_text_field(substr((string) $attempt_data['body'], 0, 600)),
+            ];
+        };
+
         $attempt = $attempt_booking($payload);
+        $push_debug_attempt('initial', $payload, $attempt);
         if ($attempt['transport_error'] !== '') {
             $this->set_last_error('CRM booking API request failed: ' . $attempt['transport_error']);
             error_log('CRM API Booking Post Error: ' . $attempt['transport_error']);
+            $this->last_debug = [
+                'endpoint' => $url,
+                'attempts' => $debug_attempts,
+            ];
             return false;
         }
 
@@ -596,6 +646,7 @@ class CRM_API_Handler {
 
                 foreach ($retry_payloads as $retry_payload) {
                     $retry_attempt = $attempt_booking($retry_payload);
+                    $push_debug_attempt('retry', $retry_payload, $retry_attempt);
                     if ($retry_attempt['transport_error'] !== '' || !is_array($retry_attempt['result'])) {
                         continue;
                     }
@@ -617,6 +668,13 @@ class CRM_API_Handler {
         if ($code < 200 || $code >= 300) {
             $this->set_last_error($this->extract_api_error_message($result, $code));
         }
+
+        $this->last_debug = [
+            'endpoint' => $url,
+            'finalStatusCode' => (int) $code,
+            'finalMessage' => $this->extract_api_error_message($result, $code),
+            'attempts' => $debug_attempts,
+        ];
 
         // --- Logic to update dynamic appointment count ---
         if (isset($result['appointment']) && isset($result['appointment']['id'])) {
