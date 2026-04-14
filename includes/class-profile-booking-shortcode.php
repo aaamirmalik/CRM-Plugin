@@ -413,11 +413,31 @@ private function extract_bio_sections($text) {
         if (crm_booking_is_rate_limited('profile_submit|' . crm_booking_get_client_ip(), 10, MINUTE_IN_SECONDS)) {
             wp_send_json(['ok' => false, 'message' => 'Too many requests. Please wait and try again.', 'used_fallback' => false]);
         }
+        if (!crm_booking_validate_recaptcha_ajax('profile_continue_booking')) {
+            return;
+        }
 
         $data = isset($_POST['booking_data']) && is_array($_POST['booking_data']) ? $_POST['booking_data'] : [];
         $email = !empty($data['email']) ? sanitize_email($data['email']) : '';
+        $phone = !empty($data['phone']) ? sanitize_text_field($data['phone']) : '';
+        $date_of_birth = !empty($data['dateOfBirth']) ? sanitize_text_field($data['dateOfBirth']) : '';
+        $notes = !empty($data['notes']) ? sanitize_textarea_field($data['notes']) : 'Booked via profile widget';
         if (!is_email($email)) {
             wp_send_json(['ok' => false, 'message' => 'A valid email is required.', 'used_fallback' => false]);
+        }
+        if ($phone !== '' && !preg_match('/^[0-9\+\-\s\(\)]{7,20}$/', $phone)) {
+            wp_send_json(['ok' => false, 'message' => 'Please enter a valid phone number.', 'used_fallback' => false]);
+        }
+        if ($date_of_birth !== '') {
+            if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $date_of_birth)) {
+                wp_send_json(['ok' => false, 'message' => 'Please enter a valid date of birth.', 'used_fallback' => false]);
+            }
+            if ($date_of_birth > current_time('Y-m-d')) {
+                wp_send_json(['ok' => false, 'message' => 'Date of birth cannot be in the future.', 'used_fallback' => false]);
+            }
+        }
+        if (strlen($notes) > 1000) {
+            wp_send_json(['ok' => false, 'message' => 'Notes are too long.', 'used_fallback' => false]);
         }
         $payload = [
             'fullName' => !empty($data['fullName']) ? sanitize_text_field($data['fullName']) : 'Website Lead',
@@ -428,8 +448,14 @@ private function extract_bio_sections($text) {
             'sessionTime' => !empty($data['sessionTime']) ? sanitize_text_field($data['sessionTime']) : '',
             'duration' => !empty($data['duration']) ? sanitize_text_field($data['duration']) : '50',
             'sessionType' => !empty($data['sessionType']) ? sanitize_text_field($data['sessionType']) : 'online',
-            'notes' => 'Booked via profile widget'
+            'notes' => $notes
         ];
+        if ($phone !== '') {
+            $payload['phone'] = $phone;
+        }
+        if ($date_of_birth !== '') {
+            $payload['dateOfBirth'] = $date_of_birth;
+        }
         if (empty($payload['therapistId']) || empty($payload['sessionDate']) || empty($payload['sessionTime'])) {
             wp_send_json(['ok' => false, 'message' => 'Please select therapist, date and time.', 'used_fallback' => false], 400);
         }
@@ -618,6 +644,10 @@ private function extract_bio_sections($text) {
                         <input type="text" id="crm-client-name" placeholder="Your full name" required>
                         <input type="email" id="crm-client-email" placeholder="Email address" required>
                     </div>
+                    <div class="crm-booking-modal-grid" style="margin-top:10px">
+                        <input type="text" id="crm-client-phone" placeholder="Phone number (optional)">
+                        <input type="date" id="crm-client-dob" placeholder="Date of birth (optional)">
+                    </div>
                     <div style="margin-top:10px">
                         <select id="crm-client-session-type">
                             <option value="online">Online</option>
@@ -627,6 +657,7 @@ private function extract_bio_sections($text) {
                     <div style="margin-top:10px">
                         <textarea id="crm-client-notes" rows="3" placeholder="Notes (optional)"></textarea>
                     </div>
+                    <?php echo crm_booking_render_recaptcha_field('crm-profile-recaptcha-v2'); ?>
                     <div class="crm-modal-message" id="crm-modal-message"></div>
                     <div class="crm-modal-actions">
                         <button type="button" class="crm-btn-secondary" id="crm-close-modal">Cancel</button>
@@ -655,7 +686,7 @@ private function extract_bio_sections($text) {
                 const status=document.getElementById('crm-status'), prev=document.getElementById('crm-prev'), next=document.getElementById('crm-next'), cont=document.getElementById('crm-continue');
                 const modal=document.getElementById('crm-booking-modal'), closeModalBtn=document.getElementById('crm-close-modal');
                 const submitBookingBtn=document.getElementById('crm-submit-booking'), nameInput=document.getElementById('crm-client-name');
-                const emailInput=document.getElementById('crm-client-email'), notesInput=document.getElementById('crm-client-notes');
+                const emailInput=document.getElementById('crm-client-email'), phoneInput=document.getElementById('crm-client-phone'), dobInput=document.getElementById('crm-client-dob'), notesInput=document.getElementById('crm-client-notes');
                 const sessionTypeInput=document.getElementById('crm-client-session-type');
                 const modalMessage=document.getElementById('crm-modal-message');
                 const successOk=document.getElementById('crm-success-ok');
@@ -664,6 +695,7 @@ private function extract_bio_sections($text) {
                 let view=new Date(), selectedDate='', selectedTime='';
                 const iso=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
                 const todayIso=iso(new Date());
+                function validPhone(v){return /^[0-9+\-\s()]{7,20}$/.test(v);}
                 function drawCalendar(){
                     const y=view.getFullYear(),m=view.getMonth(); monthTitle.textContent=view.toLocaleString(undefined,{month:'long',year:'numeric'}); cal.innerHTML='';
                     days.forEach(n=>{const h=document.createElement('div');h.className='crm-day-head';h.textContent=n;cal.appendChild(h);});
@@ -687,14 +719,25 @@ private function extract_bio_sections($text) {
                     if(msgEl) msgEl.textContent=message;
                     if(overlay) overlay.classList.add('open');
                 }
+                function getRecaptchaToken(action,contextEl){
+                    if(window.crmRecaptcha && typeof window.crmRecaptcha.getToken==='function'){
+                        return window.crmRecaptcha.getToken(action,contextEl||null);
+                    }
+                    return Promise.resolve('');
+                }
                 function submitBooking(){
-                    const fullName=(nameInput.value||'').trim(), email=(emailInput.value||'').trim(), notes=(notesInput.value||'').trim();
+                    const fullName=(nameInput.value||'').trim(), email=(emailInput.value||'').trim(), phone=(phoneInput&&phoneInput.value?phoneInput.value:'').trim(), dateOfBirth=(dobInput&&dobInput.value?dobInput.value:''), notes=(notesInput.value||'').trim();
                     if(!fullName||!email){if(modalMessage){modalMessage.style.color='#dc2626';modalMessage.textContent='Please enter your name and email.';}return;}
+                    if(phone && !validPhone(phone)){if(modalMessage){modalMessage.style.color='#dc2626';modalMessage.textContent='Please enter a valid phone number.';}return;}
+                    if(dateOfBirth && !/^\d{4}-\d{2}-\d{2}$/.test(dateOfBirth)){if(modalMessage){modalMessage.style.color='#dc2626';modalMessage.textContent='Please enter a valid date of birth.';}return;}
+                    if(dateOfBirth && dateOfBirth > todayIso){if(modalMessage){modalMessage.style.color='#dc2626';modalMessage.textContent='Date of birth cannot be in the future.';}return;}
                     submitBookingBtn.disabled=true;submitBookingBtn.textContent='Confirming...';
                     const body=new URLSearchParams();
                     body.append('action','crm_profile_continue_booking');
                     body.append('booking_data[fullName]',fullName);
                     body.append('booking_data[email]',email);
+                    body.append('booking_data[phone]',phone);
+                    body.append('booking_data[dateOfBirth]',dateOfBirth);
                     body.append('booking_data[notes]',notes);
                     body.append('booking_data[therapistId]',therapistId);
                     body.append('booking_data[serviceId]',serviceId);
@@ -703,8 +746,8 @@ private function extract_bio_sections($text) {
                     body.append('booking_data[sessionType]',sessionTypeInput.value||sessionType);
                     body.append('booking_data[duration]','50');
                     body.append('nonce',bookingNonce);
-                    fetch(ajaxUrl,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded; charset=UTF-8'},body:body.toString()}).then(r=>r.json()).then(res=>{if(res&&res.ok&&res.appointment&&res.appointment.id){const id=' ID: '+res.appointment.id; showSuccessPopup('Appointment confirmed successfully.'+id); return;}else{const msg=(res&&res.message)?res.message:'Booking failed.';if(modalMessage){modalMessage.style.color='#dc2626';modalMessage.textContent=msg;}status.style.color='#dc2626';status.textContent=msg;}})
-                    .catch(()=>{if(modalMessage){modalMessage.style.color='#dc2626';modalMessage.textContent='Booking API unavailable.';}status.style.color='#dc2626';status.textContent='Booking API unavailable.';}).finally(()=>{submitBookingBtn.disabled=false;submitBookingBtn.textContent='Confirm Appointment';});
+                    getRecaptchaToken('profile_continue_booking',modal).then(token=>{body.append('recaptcha_token',token); return fetch(ajaxUrl,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded; charset=UTF-8'},body:body.toString()}).then(r=>r.json());}).then(res=>{if(res&&res.ok&&res.appointment&&res.appointment.id){const id=' ID: '+res.appointment.id; showSuccessPopup('Appointment confirmed successfully.'+id); return;}else{const msg=(res&&res.message)?res.message:'Booking failed.';if(modalMessage){modalMessage.style.color='#dc2626';modalMessage.textContent=msg;}status.style.color='#dc2626';status.textContent=msg;}})
+                    .catch(()=>{if(modalMessage){modalMessage.style.color='#dc2626';modalMessage.textContent='Security check failed. Please refresh and try again.';}status.style.color='#dc2626';status.textContent='Security check failed. Please refresh and try again.';}).finally(()=>{submitBookingBtn.disabled=false;submitBookingBtn.textContent='Confirm Appointment';});
                 }
                 if(serviceSelect){
                     serviceSelect.addEventListener('change', function(){

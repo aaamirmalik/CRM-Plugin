@@ -3,6 +3,14 @@ function crm_dashboard_page() {
     // 1. Initialize API Handler and fetch live data
     $configured_crm = (string) get_option('crm_selected_provider', 'therapyflow_pro');
     $configured_crm_url = (string) get_option('crm_api_base_url', 'https://demo.therapyflow.pro/api');
+    $recaptcha_enabled = (string) get_option('crm_recaptcha_enabled', '0');
+    $recaptcha_version = (string) get_option('crm_recaptcha_version', 'v3');
+    if (!in_array($recaptcha_version, ['v3', 'v2_checkbox'], true)) $recaptcha_version = 'v3';
+    $recaptcha_site_key = (string) get_option('crm_recaptcha_site_key', '');
+    $recaptcha_secret_key = (string) get_option('crm_recaptcha_secret_key', '');
+    $recaptcha_min_score = (float) get_option('crm_recaptcha_min_score', 0.5);
+    if ($recaptcha_min_score < 0) $recaptcha_min_score = 0;
+    if ($recaptcha_min_score > 1) $recaptcha_min_score = 1;
     $crm_provider_options = [
         'therapyflow_pro' => 'TherapyFlow Pro',
         'therapyflow_demo' => 'TherapyFlow Demo',
@@ -492,6 +500,12 @@ function crm_dashboard_page() {
                                 <input type="email" name="email" class="f-input" placeholder="client@example.com" required></div>
                             </div>
                             <div class="form-row-2">
+                                <div><label class="form-label-premium">Phone</label>
+                                <input type="text" name="phone" class="f-input" placeholder="+1 555 123 4567"></div>
+                                <div><label class="form-label-premium">Date of Birth</label>
+                                <input type="date" name="dateOfBirth" class="f-input"></div>
+                            </div>
+                            <div class="form-row-2">
                                 <div><label class="form-label-premium">Therapist *</label>
                                     <select name="therapistId" id="manual-therapist-id" class="f-input" required>
                                         <option value="">Select therapist</option>
@@ -605,6 +619,32 @@ function crm_dashboard_page() {
                         <div class="crm-form-field">
                             <label>CRM API URL</label>
                             <input type="text" id="crm-settings-api-url" class="f-input" value="<?php echo esc_attr($configured_crm_url); ?>" placeholder="https://your-crm-domain/api">
+                        </div>
+                        <hr style="margin:16px 0; border:none; border-top:1px solid #e2e8f0;">
+                        <div class="crm-form-field">
+                            <label style="display:flex; align-items:center; gap:8px;">
+                                <input type="checkbox" id="crm-recaptcha-enabled" <?php checked($recaptcha_enabled, '1'); ?>>
+                                Enable Google reCAPTCHA for public booking submits
+                            </label>
+                        </div>
+                        <div class="crm-form-field">
+                            <label>reCAPTCHA Version</label>
+                            <select id="crm-recaptcha-version" class="f-input">
+                                <option value="v3" <?php selected($recaptcha_version, 'v3'); ?>>v3 (score based, invisible)</option>
+                                <option value="v2_checkbox" <?php selected($recaptcha_version, 'v2_checkbox'); ?>>v2 Checkbox (I am not a robot)</option>
+                            </select>
+                        </div>
+                        <div class="crm-form-field">
+                            <label>reCAPTCHA Site Key</label>
+                            <input type="text" id="crm-recaptcha-site-key" class="f-input" value="<?php echo esc_attr($recaptcha_site_key); ?>" placeholder="6Lc...">
+                        </div>
+                        <div class="crm-form-field">
+                            <label>reCAPTCHA Secret Key</label>
+                            <input type="text" id="crm-recaptcha-secret-key" class="f-input" value="<?php echo esc_attr($recaptcha_secret_key); ?>" placeholder="6Lc...">
+                        </div>
+                        <div class="crm-form-field">
+                            <label>reCAPTCHA Minimum Score (0.0 to 1.0)</label>
+                            <input type="number" id="crm-recaptcha-min-score" class="f-input" min="0" max="1" step="0.1" value="<?php echo esc_attr(number_format($recaptcha_min_score, 1, '.', '')); ?>">
                         </div>
                         <div style="display:flex; align-items:center; gap:10px; margin-top:10px;">
                             <button type="button" class="btn-primary" id="crm-save-settings-btn">Save Settings</button>
@@ -722,15 +762,32 @@ function crm_dashboard_page() {
             const crmSaveSettingsBtn = document.getElementById('crm-save-settings-btn');
             const crmProviderSelect = document.getElementById('crm-settings-provider');
             const crmApiUrlInput = document.getElementById('crm-settings-api-url');
+            const recaptchaEnabledInput = document.getElementById('crm-recaptcha-enabled');
+            const recaptchaVersionInput = document.getElementById('crm-recaptcha-version');
+            const recaptchaSiteKeyInput = document.getElementById('crm-recaptcha-site-key');
+            const recaptchaSecretKeyInput = document.getElementById('crm-recaptcha-secret-key');
+            const recaptchaMinScoreInput = document.getElementById('crm-recaptcha-min-score');
             const crmSettingsStatus = document.getElementById('crm-settings-status');
             if (crmSaveSettingsBtn && crmProviderSelect && crmApiUrlInput) {
                 crmSaveSettingsBtn.addEventListener('click', function() {
                     const provider = crmProviderSelect.value || 'therapyflow_pro';
                     const apiUrl = (crmApiUrlInput.value || '').trim();
+                    const recaptchaEnabled = !!(recaptchaEnabledInput && recaptchaEnabledInput.checked);
+                    const recaptchaVersion = recaptchaVersionInput ? (recaptchaVersionInput.value || 'v3') : 'v3';
+                    const recaptchaSiteKey = recaptchaSiteKeyInput ? (recaptchaSiteKeyInput.value || '').trim() : '';
+                    const recaptchaSecretKey = recaptchaSecretKeyInput ? (recaptchaSecretKeyInput.value || '').trim() : '';
+                    const recaptchaMinScore = recaptchaMinScoreInput ? parseFloat(recaptchaMinScoreInput.value || '0.5') : 0.5;
                     if (!apiUrl) {
                         if (crmSettingsStatus) {
                             crmSettingsStatus.style.color = '#ef4444';
                             crmSettingsStatus.textContent = 'CRM API URL is required.';
+                        }
+                        return;
+                    }
+                    if (recaptchaEnabled && (!recaptchaSiteKey || !recaptchaSecretKey)) {
+                        if (crmSettingsStatus) {
+                            crmSettingsStatus.style.color = '#ef4444';
+                            crmSettingsStatus.textContent = 'Site Key and Secret Key are required when reCAPTCHA is enabled.';
                         }
                         return;
                     }
@@ -745,7 +802,12 @@ function crm_dashboard_page() {
                         action: 'save_crm_settings_action',
                         nonce: crmAdminNonce,
                         provider: provider,
-                        api_url: apiUrl
+                        api_url: apiUrl,
+                        recaptcha_enabled: recaptchaEnabled ? 1 : 0,
+                        recaptcha_version: recaptchaVersion,
+                        recaptcha_site_key: recaptchaSiteKey,
+                        recaptcha_secret_key: recaptchaSecretKey,
+                        recaptcha_min_score: Number.isFinite(recaptchaMinScore) ? recaptchaMinScore : 0.5
                     }, function(res) {
                         if (res && res.success) {
                             if (crmSettingsStatus) {

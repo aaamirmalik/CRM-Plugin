@@ -33,6 +33,164 @@ if (!function_exists('crm_booking_is_rate_limited')) {
     }
 }
 
+if (!function_exists('crm_booking_get_recaptcha_config')) {
+    function crm_booking_get_recaptcha_config() {
+        $site_key = trim((string) get_option('crm_recaptcha_site_key', ''));
+        $secret_key = trim((string) get_option('crm_recaptcha_secret_key', ''));
+        $version = sanitize_key((string) get_option('crm_recaptcha_version', 'v3'));
+        if (!in_array($version, ['v3', 'v2_checkbox'], true)) {
+            $version = 'v3';
+        }
+        $min_score = (float) get_option('crm_recaptcha_min_score', 0.5);
+        if ($min_score < 0) $min_score = 0;
+        if ($min_score > 1) $min_score = 1;
+
+        $enabled_option = (string) get_option('crm_recaptcha_enabled', '0');
+        $enabled = in_array($enabled_option, ['1', 'yes', 'true'], true);
+        $configured = ($site_key !== '' && $secret_key !== '');
+
+        return [
+            'enabled' => $enabled && $configured,
+            'configured' => $configured,
+            'version' => $version,
+            'site_key' => $site_key,
+            'secret_key' => $secret_key,
+            'min_score' => $min_score,
+        ];
+    }
+}
+
+if (!function_exists('crm_booking_get_recaptcha_site_key')) {
+    function crm_booking_get_recaptcha_site_key() {
+        $cfg = crm_booking_get_recaptcha_config();
+        return $cfg['enabled'] ? $cfg['site_key'] : '';
+    }
+}
+
+if (!function_exists('crm_booking_verify_recaptcha_token')) {
+    function crm_booking_verify_recaptcha_token($token, $expected_action = '') {
+        $cfg = crm_booking_get_recaptcha_config();
+        if (empty($cfg['enabled'])) {
+            return true;
+        }
+
+        $token = sanitize_text_field((string) $token);
+        if ($token === '') {
+            return new WP_Error('recaptcha_missing', 'Please complete the reCAPTCHA check.');
+        }
+
+        $response = wp_remote_post(
+            'https://www.google.com/recaptcha/api/siteverify',
+            [
+                'timeout' => 12,
+                'body' => [
+                    'secret' => $cfg['secret_key'],
+                    'response' => $token,
+                    'remoteip' => crm_booking_get_client_ip(),
+                ],
+            ]
+        );
+
+        if (is_wp_error($response)) {
+            return new WP_Error('recaptcha_unreachable', 'Could not verify reCAPTCHA. Please try again.');
+        }
+
+        $body = wp_remote_retrieve_body($response);
+        $json = json_decode((string) $body, true);
+        if (!is_array($json) || empty($json['success'])) {
+            return new WP_Error('recaptcha_failed', 'reCAPTCHA verification failed. Please try again.');
+        }
+
+        if ($cfg['version'] === 'v3') {
+            $expected_action = sanitize_key((string) $expected_action);
+            if ($expected_action !== '' && !empty($json['action'])) {
+                $actual_action = sanitize_key((string) $json['action']);
+                if ($actual_action !== $expected_action) {
+                    return new WP_Error('recaptcha_action_mismatch', 'Security validation failed. Please refresh and try again.');
+                }
+            }
+
+            if (isset($json['score']) && is_numeric($json['score']) && (float) $json['score'] < (float) $cfg['min_score']) {
+                return new WP_Error('recaptcha_low_score', 'reCAPTCHA score was too low. Please try again.');
+            }
+        }
+
+        return true;
+    }
+}
+
+if (!function_exists('crm_booking_validate_recaptcha_ajax')) {
+    function crm_booking_validate_recaptcha_ajax($expected_action = '') {
+        $token = isset($_POST['recaptcha_token']) ? sanitize_text_field((string) wp_unslash($_POST['recaptcha_token'])) : '';
+        if ($token === '' && isset($_POST['g-recaptcha-response'])) {
+            $token = sanitize_text_field((string) wp_unslash($_POST['g-recaptcha-response']));
+        }
+        $verified = crm_booking_verify_recaptcha_token($token, $expected_action);
+        if (is_wp_error($verified)) {
+            wp_send_json(['ok' => false, 'message' => $verified->get_error_message()], 400);
+            return false;
+        }
+        return true;
+    }
+}
+
+if (!function_exists('crm_booking_render_recaptcha_bootstrap_script')) {
+    function crm_booking_render_recaptcha_bootstrap_script() {
+        $cfg = crm_booking_get_recaptcha_config();
+        if (empty($cfg['enabled'])) {
+            return '';
+        }
+
+        $site_key = esc_js($cfg['site_key']);
+        ob_start();
+        ?>
+        <script src="https://www.google.com/recaptcha/api.js?render=<?php echo $site_key; ?>" async defer></script>
+        <script>
+            (function(){
+                const siteKey = '<?php echo $site_key; ?>';
+                if (!siteKey) return;
+                if (window.crmRecaptcha && typeof window.crmRecaptcha.getToken === 'function') return;
+
+                window.crmRecaptcha = {
+                    enabled: true,
+                    siteKey: siteKey,
+                    getToken: function(action) {
+                        return new Promise(function(resolve, reject) {
+                            if (!window.grecaptcha || typeof window.grecaptcha.ready !== 'function') {
+                                reject(new Error('reCAPTCHA is not ready yet.'));
+                                return;
+                            }
+                            window.grecaptcha.ready(function() {
+                                window.grecaptcha.execute(siteKey, { action: action || 'submit' })
+                                    .then(resolve)
+                                    .catch(reject);
+                            });
+                        });
+                    }
+                };
+            })();
+        </script>
+        <?php
+        return (string) ob_get_clean();
+    }
+}
+
+if (!function_exists('crm_booking_render_recaptcha_field')) {
+    function crm_booking_render_recaptcha_field($container_id = '') {
+        $cfg = crm_booking_get_recaptcha_config();
+        if (empty($cfg['enabled']) || $cfg['version'] !== 'v2_checkbox') {
+            return '';
+        }
+
+        $container_id = sanitize_html_class((string) $container_id);
+        if ($container_id === '') {
+            $container_id = 'crm-recaptcha-v2-' . wp_rand(1000, 999999);
+        }
+
+        return '<div class="crm-recaptcha-wrap" style="margin-top:14px;"><div id="' . esc_attr($container_id) . '" class="crm-recaptcha-v2" data-sitekey="' . esc_attr($cfg['site_key']) . '"></div></div>';
+    }
+}
+
 if (!function_exists('crm_get_cached_therapists')) {
     function crm_get_cached_therapists() {
         $q = new WP_Query([
@@ -288,6 +446,17 @@ class CRM_Connector_Core {
 
     public function enqueue_frontend_assets() {
         wp_enqueue_script('jquery');
+        $cfg = crm_booking_get_recaptcha_config();
+        if (empty($cfg['enabled'])) return;
+
+        $is_v2 = isset($cfg['version']) && $cfg['version'] === 'v2_checkbox';
+        $script_url = $is_v2
+            ? 'https://www.google.com/recaptcha/api.js?render=explicit'
+            : 'https://www.google.com/recaptcha/api.js?render=' . rawurlencode($cfg['site_key']);
+
+        wp_enqueue_script('crm-google-recaptcha', $script_url, [], null, true);
+        $inline = '(function(){var siteKey=' . wp_json_encode((string) $cfg['site_key']) . ';var version=' . wp_json_encode((string) $cfg['version']) . ';if(!siteKey){return;}if(window.crmRecaptcha&&typeof window.crmRecaptcha.getToken==="function"){return;}if(version==="v2_checkbox"){window.crmRecaptcha={enabled:true,version:"v2_checkbox",siteKey:siteKey,renderAll:function(){if(!window.grecaptcha||typeof window.grecaptcha.render!=="function"){return;}var nodes=document.querySelectorAll(".crm-recaptcha-v2");for(var i=0;i<nodes.length;i++){var el=nodes[i];if(el.getAttribute("data-rendered")==="1"){continue;}try{var widgetId=window.grecaptcha.render(el,{sitekey:siteKey});el.setAttribute("data-widget-id",String(widgetId));el.setAttribute("data-rendered","1");}catch(e){}}},getToken:function(action,contextEl){return new Promise(function(resolve,reject){window.crmRecaptcha.renderAll();var target=null;if(contextEl&&typeof contextEl.querySelector==="function"){target=contextEl.querySelector(".crm-recaptcha-v2");}if(!target){target=document.querySelector(".crm-recaptcha-v2");}if(!target){resolve("");return;}var widgetId=target.getAttribute("data-widget-id");if(widgetId===null||widgetId===""){reject(new Error("reCAPTCHA is not ready yet."));return;}var token="";try{token=window.grecaptcha.getResponse(parseInt(widgetId,10));}catch(e){token="";}if(!token){reject(new Error("Please complete the reCAPTCHA check."));return;}resolve(token);});},reset:function(contextEl){if(!window.grecaptcha||typeof window.grecaptcha.reset!=="function"){return;}var target=null;if(contextEl&&typeof contextEl.querySelector==="function"){target=contextEl.querySelector(".crm-recaptcha-v2");}if(!target){target=document.querySelector(".crm-recaptcha-v2");}if(!target){return;}var widgetId=target.getAttribute("data-widget-id");if(widgetId!==null&&widgetId!==""){window.grecaptcha.reset(parseInt(widgetId,10));}}};document.addEventListener("DOMContentLoaded",function(){var tries=0;var timer=setInterval(function(){tries++;window.crmRecaptcha.renderAll();if((window.grecaptcha&&typeof window.grecaptcha.render==="function")||tries>40){clearInterval(timer);}},250);});return;}window.crmRecaptcha={enabled:true,version:"v3",siteKey:siteKey,getToken:function(action){return new Promise(function(resolve,reject){if(!window.grecaptcha||typeof window.grecaptcha.ready!=="function"){reject(new Error("reCAPTCHA is not ready yet."));return;}window.grecaptcha.ready(function(){window.grecaptcha.execute(siteKey,{action:action||"submit"}).then(resolve).catch(reject);});});}};})();';
+        wp_add_inline_script('crm-google-recaptcha', $inline, 'after');
     }
 
     public function register_team_mapping_metabox() {
@@ -542,6 +711,8 @@ class CRM_Connector_Core {
                     <input type="checkbox" name="isZoom" style="width:20px; height:20px;">
                 </div>
 
+                <?php echo crm_booking_render_recaptcha_field('crm-frontend-recaptcha-v2'); ?>
+
                 <div class="btn-group-submit">
                     <button type="button" class="btn-cancel">Cancel</button>
                     <button type="submit" class="btn-primary-crm" id="crm-premium-btn">Schedule Session</button>
@@ -557,27 +728,46 @@ class CRM_Connector_Core {
                     $('#crm-duration-input').val($(this).data('val'));
                 });
 
+                function getRecaptchaToken(action, contextEl) {
+                    if (window.crmRecaptcha && typeof window.crmRecaptcha.getToken === 'function') {
+                        return window.crmRecaptcha.getToken(action, contextEl || null);
+                    }
+                    return Promise.resolve('');
+                }
+
                 $('#crm-frontend-premium-booking').on('submit', function(e) {
                     e.preventDefault();
+                    const formEl = this;
                     const btn = $('#crm-premium-btn');
                     btn.text('Scheduling...').prop('disabled', true);
                     
                     const data = Object.fromEntries(new FormData(this).entries());
                     data.sessionType = "online";
-                    
-                    $.post('<?php echo admin_url('admin-ajax.php'); ?>', {
-                        action: 'frontend_crm_booking_submit',
-                        nonce: '<?php echo esc_js(wp_create_nonce('crm_public_booking_nonce')); ?>',
-                        booking_data: data
-                    }, function(res) {
-                        if(res.appointment) {
-                            alert('Success! Session scheduled. ID: ' + res.appointment.id);
-                            location.reload();
-                        } else {
-                            alert('Error: ' + (res.message || 'Submission failed.'));
+
+                    getRecaptchaToken('frontend_booking_submit', formEl)
+                        .then(function(token) {
+                            $.post('<?php echo admin_url('admin-ajax.php'); ?>', {
+                                action: 'frontend_crm_booking_submit',
+                                nonce: '<?php echo esc_js(wp_create_nonce('crm_public_booking_nonce')); ?>',
+                                recaptcha_token: token,
+                                booking_data: data
+                            }, function(res) {
+                                if(res.appointment) {
+                                    alert('Success! Session scheduled. ID: ' + res.appointment.id);
+                                    location.reload();
+                                } else {
+                                    alert('Error: ' + (res.message || 'Submission failed.'));
+                                    btn.text('Schedule Session').prop('disabled', false);
+                                }
+                            }).fail(function() {
+                                alert('Error: Submission failed.');
+                                btn.text('Schedule Session').prop('disabled', false);
+                            });
+                        })
+                        .catch(function() {
+                            alert('Security check could not run. Please refresh and try again.');
                             btn.text('Schedule Session').prop('disabled', false);
-                        }
-                    });
+                        });
                 });
             });
         </script>
@@ -590,6 +780,9 @@ class CRM_Connector_Core {
      */
     public function handle_frontend_booking() {
         if (!$this->verify_public_ajax_request('frontend_crm_booking_submit', 12, MINUTE_IN_SECONDS)) {
+            return;
+        }
+        if (!crm_booking_validate_recaptcha_ajax('frontend_booking_submit')) {
             return;
         }
         $api = new CRM_API_Handler();
@@ -714,8 +907,28 @@ class CRM_Connector_Core {
             wp_send_json_error(['message' => 'Please provide a valid CRM API URL.'], 400);
         }
 
+        $recaptcha_enabled = !empty($_POST['recaptcha_enabled']) ? '1' : '0';
+        $recaptcha_version = isset($_POST['recaptcha_version']) ? sanitize_key((string) wp_unslash($_POST['recaptcha_version'])) : 'v3';
+        if (!in_array($recaptcha_version, ['v3', 'v2_checkbox'], true)) {
+            $recaptcha_version = 'v3';
+        }
+        $recaptcha_site_key = isset($_POST['recaptcha_site_key']) ? sanitize_text_field((string) wp_unslash($_POST['recaptcha_site_key'])) : '';
+        $recaptcha_secret_key = isset($_POST['recaptcha_secret_key']) ? sanitize_text_field((string) wp_unslash($_POST['recaptcha_secret_key'])) : '';
+        $recaptcha_min_score = isset($_POST['recaptcha_min_score']) ? (float) wp_unslash($_POST['recaptcha_min_score']) : 0.5;
+        if ($recaptcha_min_score < 0) $recaptcha_min_score = 0;
+        if ($recaptcha_min_score > 1) $recaptcha_min_score = 1;
+
+        if ($recaptcha_enabled === '1' && ($recaptcha_site_key === '' || $recaptcha_secret_key === '')) {
+            wp_send_json_error(['message' => 'To enable reCAPTCHA, both Site Key and Secret Key are required.'], 400);
+        }
+
         update_option('crm_selected_provider', $provider, false);
         update_option('crm_api_base_url', untrailingslashit($api_url), false);
+        update_option('crm_recaptcha_enabled', $recaptcha_enabled, false);
+        update_option('crm_recaptcha_version', $recaptcha_version, false);
+        update_option('crm_recaptcha_site_key', $recaptcha_site_key, false);
+        update_option('crm_recaptcha_secret_key', $recaptcha_secret_key, false);
+        update_option('crm_recaptcha_min_score', $recaptcha_min_score, false);
 
         $api = new CRM_API_Handler();
         $therapists = $api->get_all_therapists();
@@ -830,6 +1043,13 @@ class CRM_Connector_Core {
             $notes = sanitize_textarea_field((string) $data['reason']);
         }
         $phone = isset($data['phone']) ? sanitize_text_field((string) $data['phone']) : '';
+        $date_of_birth = isset($data['dateOfBirth']) ? sanitize_text_field((string) $data['dateOfBirth']) : '';
+        if ($date_of_birth === '' && isset($data['date_of_birth'])) {
+            $date_of_birth = sanitize_text_field((string) $data['date_of_birth']);
+        }
+        if ($date_of_birth === '' && isset($data['dob'])) {
+            $date_of_birth = sanitize_text_field((string) $data['dob']);
+        }
         $room = isset($data['room']) ? sanitize_text_field((string) $data['room']) : '';
         if ($room === '' && isset($data['room_id'])) {
             $room = sanitize_text_field((string) $data['room_id']);
@@ -889,6 +1109,14 @@ class CRM_Connector_Core {
         if ($phone !== '' && !preg_match('/^[0-9\+\-\s\(\)]{7,20}$/', $phone)) {
             return new WP_Error('invalid_phone', 'Please enter a valid phone number.');
         }
+        if ($date_of_birth !== '') {
+            if (!$this->is_valid_iso_date($date_of_birth)) {
+                return new WP_Error('invalid_dob', 'Please enter a valid date of birth.');
+            }
+            if ($date_of_birth > current_time('Y-m-d')) {
+                return new WP_Error('future_dob', 'Date of birth cannot be in the future.');
+            }
+        }
 
         $payload = [
             'fullName' => $full_name,
@@ -902,6 +1130,7 @@ class CRM_Connector_Core {
             'notes' => $notes,
         ];
         if ($phone !== '') $payload['phone'] = $phone;
+        if ($date_of_birth !== '') $payload['dateOfBirth'] = $date_of_birth;
         if ($room !== '') $payload['room'] = $room;
         if ($is_zoom) $payload['isZoom'] = true;
 
