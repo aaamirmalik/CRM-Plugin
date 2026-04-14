@@ -563,20 +563,53 @@ class CRM_API_Handler {
             return false;
         }
 
-        // Fallback retry: if CRM rejects dateOfBirth with a generic invalid request,
-        // retry once using dob key only for DOB compatibility.
-        if (($code < 200 || $code >= 300) && isset($payload['dateOfBirth'])) {
+        // Fallback retries for strict CRM validators returning generic invalid data.
+        if ($code < 200 || $code >= 300) {
             $msg = $this->extract_api_error_message($result, $code);
             if (stripos($msg, 'invalid request data') !== false) {
-                $retry_payload = $payload;
-                $retry_payload['dob'] = $retry_payload['dateOfBirth'];
-                unset($retry_payload['dateOfBirth']);
-                $retry_attempt = $attempt_booking($retry_payload);
-                if ($retry_attempt['transport_error'] === '' && is_array($retry_attempt['result'])) {
+                $dob_raw = isset($payload['dateOfBirth']) ? sanitize_text_field((string) $payload['dateOfBirth']) : '';
+                $retry_payloads = [];
+
+                if ($dob_raw !== '') {
+                    // Variant 1: send dob instead of dateOfBirth.
+                    $variant_dob_key = $payload;
+                    $variant_dob_key['dob'] = $dob_raw;
+                    unset($variant_dob_key['dateOfBirth']);
+                    $retry_payloads[] = $variant_dob_key;
+
+                    // Variant 2: ISO datetime for dateOfBirth.
+                    $variant_dob_iso = $payload;
+                    $variant_dob_iso['dateOfBirth'] = $dob_raw . 'T00:00:00.000Z';
+                    $retry_payloads[] = $variant_dob_iso;
+
+                    // Variant 3: ISO datetime + dob key.
+                    $variant_dob_key_iso = $payload;
+                    $variant_dob_key_iso['dob'] = $dob_raw . 'T00:00:00.000Z';
+                    unset($variant_dob_key_iso['dateOfBirth']);
+                    $retry_payloads[] = $variant_dob_key_iso;
+                }
+
+                // Variant 4: remove sessionStartUtc and rely on sessionDate/sessionTime only.
+                $variant_no_start = $payload;
+                unset($variant_no_start['sessionStartUtc']);
+                $retry_payloads[] = $variant_no_start;
+
+                foreach ($retry_payloads as $retry_payload) {
+                    $retry_attempt = $attempt_booking($retry_payload);
+                    if ($retry_attempt['transport_error'] !== '' || !is_array($retry_attempt['result'])) {
+                        continue;
+                    }
                     $payload = $retry_payload;
                     $code = (int) $retry_attempt['code'];
                     $body = (string) $retry_attempt['body'];
                     $result = $retry_attempt['result'];
+                    if ($code >= 200 && $code < 300) {
+                        break;
+                    }
+                    $msg = $this->extract_api_error_message($result, $code);
+                    if (stripos($msg, 'invalid request data') === false) {
+                        break;
+                    }
                 }
             }
         }
