@@ -297,6 +297,7 @@ if (!function_exists('crm_get_cached_services')) {
                 'featured' => (bool) get_post_meta($post_id, '_crm_featured', true),
                 'tags' => (array) get_post_meta($post_id, '_crm_tags', true),
                 'imageUrl' => (string) get_post_meta($post_id, '_crm_service_image_url', true),
+                'serviceIconUrl' => (string) get_post_meta($post_id, '_crm_service_icon_url', true),
                 'therapists' => $therapists,
             ];
         }
@@ -581,6 +582,7 @@ class CRM_Connector_Core {
         $tags = (array) get_post_meta($post->ID, '_crm_tags', true);
         $featured = (bool) get_post_meta($post->ID, '_crm_featured', true);
         $image_url = (string) get_post_meta($post->ID, '_crm_service_image_url', true);
+        $icon_url = (string) get_post_meta($post->ID, '_crm_service_icon_url', true);
         $short_description = (string) get_post_meta($post->ID, '_crm_short_description', true);
         $raw = get_post_meta($post->ID, '_crm_service_raw', true);
         ?>
@@ -595,6 +597,7 @@ class CRM_Connector_Core {
                 <tr><th>Tags</th><td><?php echo esc_html(!empty($tags) ? implode(', ', $tags) : '-'); ?></td></tr>
                 <tr><th>Featured</th><td><?php echo esc_html($featured ? 'Yes' : 'No'); ?></td></tr>
                 <tr><th>Image URL</th><td><?php echo esc_html($image_url ?: '-'); ?></td></tr>
+                <tr><th>Service Icon URL</th><td><?php echo esc_html($icon_url ?: '-'); ?></td></tr>
                 <tr><th>Short Description</th><td><?php echo esc_html($short_description ?: '-'); ?></td></tr>
             </tbody>
         </table>
@@ -1351,6 +1354,7 @@ class CRM_Connector_Core {
                 : [];
             $featured = !empty($service_raw['featured']);
             $image_url = isset($service_raw['imageUrl']) ? esc_url_raw((string) $service_raw['imageUrl']) : '';
+            $service_icon_url = isset($service_raw['serviceIconUrl']) ? esc_url_raw((string) $service_raw['serviceIconUrl']) : '';
             $therapists = isset($service_raw['therapists']) && is_array($service_raw['therapists']) ? $service_raw['therapists'] : [];
 
             $summary_lines = [];
@@ -1395,6 +1399,7 @@ class CRM_Connector_Core {
             update_post_meta($post_id, '_crm_featured', $featured ? '1' : '0');
             update_post_meta($post_id, '_crm_tags', $tags);
             update_post_meta($post_id, '_crm_service_image_url', $image_url);
+            update_post_meta($post_id, '_crm_service_icon_url', $service_icon_url);
             update_post_meta($post_id, '_crm_service_therapists', $therapists);
             update_post_meta($post_id, '_crm_service_raw', $service_raw);
         }

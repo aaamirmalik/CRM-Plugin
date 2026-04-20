@@ -31,6 +31,7 @@ if (!$archive_url) {
             $tags = (array) get_post_meta($post_id, '_crm_tags', true);
             $short_description = (string) get_post_meta($post_id, '_crm_short_description', true);
             $service_image_url = (string) get_post_meta($post_id, '_crm_service_image_url', true);
+            $service_icon_url = (string) get_post_meta($post_id, '_crm_service_icon_url', true);
             $service_button = function_exists('get_field') ? (string) get_field('service_button_label', $post_id) : '';
 
             $summary = $short_description !== '' ? $short_description : get_the_excerpt();
@@ -40,6 +41,8 @@ if (!$archive_url) {
 
             if ($service_image_url !== '') {
                 $image_url = $service_image_url;
+            } elseif ($service_icon_url !== '') {
+                $image_url = $service_icon_url;
             } elseif (has_post_thumbnail()) {
                 $thumb_id = get_post_thumbnail_id();
                 $thumb_src = wp_get_attachment_image_src($thumb_id, 'large');
@@ -155,6 +158,9 @@ if (!$archive_url) {
                         <?php
                             $related_id = get_the_ID();
                             $related_image_url = (string) get_post_meta($related_id, '_crm_service_image_url', true);
+                            if ($related_image_url === '') {
+                                $related_image_url = (string) get_post_meta($related_id, '_crm_service_icon_url', true);
+                            }
                             $related_desc = (string) get_post_meta($related_id, '_crm_short_description', true);
                             $card_desc = $related_desc !== '' ? $related_desc : wp_trim_words(get_the_excerpt(), 20);
                             $related_button = function_exists('get_field') ? (string) get_field('service_button_label', $related_id) : '';
